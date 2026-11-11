@@ -1,7 +1,7 @@
 """Task data and validation, independent of the UI and database."""
 
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
 
 
 @dataclass(frozen=True)
@@ -40,3 +40,34 @@ class Task:
     status: str
     created_at: datetime
     completed_at: datetime | None
+
+
+def revise_task(
+    task: Task,
+    draft: TaskDraft,
+    remaining_minutes: int,
+    *,
+    now: datetime | None = None,
+) -> Task:
+    """Validate an edit and derive consistent completion state from remaining work."""
+    draft = TaskDraft(
+        draft.title, draft.category, draft.deadline, draft.priority, draft.estimate_minutes
+    )
+    if type(remaining_minutes) is not int or not 0 <= remaining_minutes <= draft.estimate_minutes:
+        raise ValueError("Remaining minutes must be a whole number from zero to the estimate.")
+    completed_at = None
+    if remaining_minutes == 0:
+        completed_at = task.completed_at or (now if now is not None else datetime.now(timezone.utc))
+        if completed_at.utcoffset() is None:
+            raise ValueError("Completion time must include a timezone.")
+    return replace(
+        task,
+        title=draft.title,
+        category=draft.category,
+        deadline=draft.deadline,
+        priority=draft.priority,
+        estimate_minutes=draft.estimate_minutes,
+        remaining_minutes=remaining_minutes,
+        status="completed" if remaining_minutes == 0 else "pending",
+        completed_at=completed_at,
+    )

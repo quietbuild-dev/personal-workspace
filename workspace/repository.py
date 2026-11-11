@@ -5,7 +5,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from workspace.models import Task, TaskDraft
+from workspace.models import Task, TaskDraft, revise_task
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "workspace.db"
 
@@ -81,3 +81,36 @@ def list_tasks(db_path: Path = DEFAULT_DB_PATH) -> list[Task]:
         connection.row_factory = sqlite3.Row
         rows = connection.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
         return [_to_task(row) for row in rows]
+
+
+def update_task(
+    db_path: Path, task_id: int, draft: TaskDraft, remaining_minutes: int
+) -> Task:
+    """Edit an existing record atomically, preserving its ID and creation time."""
+    if type(task_id) is not int or not 1 <= task_id <= 2**63 - 1:
+        raise ValueError("Task ID must be a positive integer.")
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.row_factory = sqlite3.Row
+        # Read and write in the same transaction, including completion timestamps.
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise ValueError("This task no longer exists. Refresh the page.")
+        revised = revise_task(_to_task(row), draft, remaining_minutes)
+        connection.execute(
+            """UPDATE tasks SET title = ?, category = ?, deadline = ?, priority = ?,
+               estimate_minutes = ?, remaining_minutes = ?, status = ?, completed_at = ?
+               WHERE id = ?""",
+            (
+                revised.title,
+                revised.category,
+                revised.deadline.isoformat() if revised.deadline else None,
+                revised.priority,
+                revised.estimate_minutes,
+                revised.remaining_minutes,
+                revised.status,
+                revised.completed_at.isoformat() if revised.completed_at else None,
+                revised.id,
+            ),
+        )
+        return revised
