@@ -1,4 +1,8 @@
-# Setup verification — November 11, 2026
+# Setup verification — November 11, 2026 (historical starter record)
+
+> This page describes the old setup-only scaffold, not the latest MVP. See
+> `TEST_REPORT.md` for the current results.
+
 
 ## Completed in the preparation environment
 
