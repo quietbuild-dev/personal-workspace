@@ -1,147 +1,169 @@
 # Personal Workspace
 
-A small, local-first personal planning workspace for the Bocconi Software
-Engineering project. Working title; choose the product name later.
+A local, single-user productivity workspace for the Bocconi Software Engineering (20875)
+student project. Built with Python 3.12, Streamlit, SQLite and Plotly.
 
-**Stage:** planning and setup, November 11, 2026.
-**Submission date:** November 27, 2026, as supplied in the project brief.
-**Budget:** 45 combined student hours.
+**MVP implementation stage:** task management, date-specific availability, a weekly
+heuristic planner and a connected dashboard are implemented. Core tests pass in
+the provided development environment. Browser appearance and user interactions
+still require local checks before declaring the final submission complete.
 
-## What is ready
+## What it does
 
-- A Streamlit entry point and three navigable screens.
-- A restrained dark theme and dashboard empty states.
-- Dependency files, pytest configuration, Ruff configuration, and Git ignore rules.
-- A scoped [project plan](docs/PLAN.md), [technical contract](docs/DESIGN.md),
-  [first implementation milestone](docs/FIRST_MILESTONE.md), and
-  [testing checklist](tests/README.md).
+- **Dashboard:** open task count, remaining minutes, completion percentage among
+  tasks **due Monday–Sunday of the current week** (N/A when none), today's focus,
+  overdue and upcoming deadlines, planned-versus-available chart, and an insight
+  based on actual deadline shortfalls.
+- **Tasks & Projects:** create, filter, edit, complete, reopen and explicitly
+  confirm permanent deletion. "Projects" are simple category labels.
+- **Smart Planner:** save daily minutes for this exact calendar week, then allocate
+  incomplete tasks between today and Sunday. The deadline-first, priority-aware
+  algorithm may split work across days. It reports overdue work, deadline-capacity
+  shortfalls, and backlog outside this week's plan separately.
 
-This is a starter, not the finished application. Task forms, database access,
-scheduling, metrics, and charts are deliberately not implemented yet. Dashboard
-dashes mean that the data is not connected; they are not fabricated statistics.
+**Important:** A plan is a suggestion. It does not automatically reduce a task's
+remaining work. After doing work, change "Remaining minutes" or mark the task
+completed yourself. The planner is a deterministic greedy heuristic, **not** a
+promise of optimality or feasibility after Sunday.
 
-## Start on your computer
+## Run on Windows (from the existing checkout)
 
-Install Python **3.12** and Git, extract this folder, and open a terminal inside
-`personal-workspace`. Both students should use Python 3.12.
+Open PowerShell in `C:\Users\Win\OneDrive\Desktop\personal-workspace`:
 
-Windows PowerShell, without changing execution policy:
+```powershell
+cd C:\Users\Win\OneDrive\Desktop\personal-workspace
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+Open the URL shown by Streamlit (often `http://localhost:8501`; 8502 is fine too).
+Stop the app with **Ctrl+C** in PowerShell.
+
+For a new machine, install Python 3.12, create `.venv`, then:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-macOS or Linux:
+`sqlite3` is part of Python. No SQLite package, database server, account, cloud
+service, or calendar integration is needed.
 
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m streamlit run app.py
+## Applying the MVP update ZIP without losing work
+
+This is an **overlay update**, not a new repository. Downloading the ZIP does
+**not** install it. Extract it and copy its contents into your **existing**
+`personal-workspace` folder, preserving the directory structure. Allow replacing
+matching **source files** (`workspace/`, `tests/`, `README.md`, etc.). The ZIP
+contains **no** `.git`, `.venv`, or `data/workspace.db` files.
+
+Recommended Git steps **before** extracting, assuming a clean `main`:
+
+```powershell
+git status -sb
+git switch -c feat/mvp-integration
 ```
 
-Open the local URL printed by Streamlit, normally `http://localhost:8501`.
-Confirm all three sidebar destinations open. Stop the server with Ctrl+C.
-Always launch from the project folder so Streamlit loads `.streamlit/config.toml`.
-Python's `sqlite3` module is built in; do not install an SQLite Python package.
+With the downloaded `personal-workspace-mvp-update.zip` in Windows Downloads,
+while PowerShell is in your **existing project directory**:
 
-For the examples below, `python` means the Python executable inside your `.venv`.
-You may activate it with `.venv\Scripts\Activate.ps1` on Windows, or
-`source .venv/bin/activate` on macOS/Linux. If PowerShell blocks activation,
-keep using the explicit executable path above.
-
-The current requirements specify compatible version ranges. After the first
-successful install and launch, one student should freeze that fresh environment
-and commit the resolved versions:
-
-```bash
-python -m pip freeze > requirements-lock.txt
+```powershell
+Expand-Archive -LiteralPath "$env:USERPROFILE\Downloads\personal-workspace-mvp-update.zip" -DestinationPath . -Force
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-The other student then installs with `python -m pip install -r requirements-lock.txt`.
-Use this same lock file for the fresh-install check and future CI. Do not upgrade
-dependencies during the final week without a concrete reason and rechecking the app.
+If the browser saved the ZIP somewhere else, change just the path before
+`-DestinationPath`. Alternatively, right-click ZIP > Extract All into a temporary
+folder, **open that extracted folder**, then copy the files **inside** it into
+your original project, choosing to replace matching source files. Do **not**
+copy into a second `personal-workspace` subfolder.
 
-```bash
-python -m ruff check .
-python -m ruff format --check .
+The original database stays at `data/workspace.db`; schema initialization adds
+only the `daily_availability` table. Back up your personal DB before the first
+run as an additional precaution, particularly before a deadline.
+
+## Safe demo database
+
+Generate an **independent** sample database, without modifying your tasks:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.create_demo_db
+$env:WORKSPACE_DB_PATH = (Resolve-Path ".\data\demo-workspace.db").Path
+.\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-After writing the first domain and persistence tests in the next milestone:
+The generator refuses to overwrite an existing database file or the active
+personal DB path. It creates `data/demo-workspace.db` instead; the `data/`
+folder is Git-ignored. When finished, stop Streamlit with Ctrl+C, and **in the
+same PowerShell window** clear the demo override:
 
-```bash
-python -m pytest
+```powershell
+Remove-Item Env:WORKSPACE_DB_PATH
 ```
 
-There are intentionally no feature tests yet. Running pytest now will report
-that no tests were collected; this is not evidence of application correctness.
+Then launch normally to see your personal tasks again. **Do not delete your
+personal `data/workspace.db`.** For a fixed-date core logic demo use:
+`python -m scripts.create_demo_db --today 2026-11-11 --output <different-path>`.
+The live Streamlit UI uses the computer's *real* current date, so use the normal
+(today-based) demo for its visual walkthrough.
 
-## Create the shared GitHub repository
+## Tests and quality
 
-One student creates an **empty private** repository named `personal-workspace`
-in their own GitHub account. Do not add a second README, license, or gitignore
-on GitHub. Invite the other student as a collaborator. Revisit visibility and
-licensing after checking the course's open-source requirements.
-
-From this folder:
-
-```bash
-git init -b main
-git add .
-git commit -m "Set up workspace scaffold and project plan"
-git remote add origin https://github.com/YOUR-USERNAME/personal-workspace.git
-git push -u origin main
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m scripts.check_ui
 ```
 
-Replace `YOUR-USERNAME` with the repository owner's GitHub username. If Git asks
-for identity, set your own name and email. No GitHub repository has been created
-or published by this starter.
+The last command uses Streamlit's page test harness on a disposable DB and is an
+**additional smoke check**, not a substitute for testing browser forms and page
+switching. Follow [the manual checklist](docs/DEMO_WALKTHROUGH.md) as well.
+Record actual results on your machine in `docs/TEST_REPORT.md`.
 
-The second student clones the repository and repeats the environment setup:
+On the team's successful Windows Python 3.12 environment, capture installed
+dependency versions for reproducibility:
 
-```bash
-git clone https://github.com/YOUR-USERNAME/personal-workspace.git
-cd personal-workspace
+```powershell
+.\.venv\Scripts\python.exe -m pip freeze > requirements-lock.txt
 ```
 
-## Daily collaboration
+Review the generated lock file before committing it (avoid unrelated packages
+from an old environment); repeat an install in a clean virtual environment
+using the same lock file. A verified Windows lock and clean-install result
+are **not** included in this update.
 
-Start a small feature branch from an up-to-date `main`:
+## Architecture and planner policy
 
-```bash
-git switch main
-git pull --ff-only
-git switch -c feat/task-persistence
-```
+| File | Role |
+| --- | --- |
+| `app.py`, `.streamlit/config.toml` | Navigation and dark visual theme |
+| `workspace/views/` | Three Streamlit pages (presentation and forms) |
+| `workspace/models.py` | Immutable task objects, validation, edit semantics |
+| `workspace/repository.py` | SQLite CRUD, additive availability schema |
+| `workspace/planner.py` | Pure, deterministic allocations and residuals |
+| `workspace/metrics.py` | Pure dashboard statistics and insight |
+| `workspace/overview.py` | One shared DB-read and recompute path for planner/dashboard |
+| `scripts/` | Isolated demo generator and optional UI smoke check |
+| `tests/` | Task, planning, metrics, persistence, migration and integration tests |
 
-Keep each change small, include relevant tests, and open a pull request for the
-other student to review. Merge daily when practical. Agree who edits a shared
-file before working on it. Do not exchange database files or merge `.venv` folders.
-Add a short note in each pull request explaining what changed and how it was checked.
+See [algorithm and implementation notes](docs/MVP_IMPLEMENTATION.md),
+[original detailed design contract](docs/DESIGN.md),
+[demo and UI checklist](docs/DEMO_WALKTHROUGH.md), and
+[test record](docs/TEST_REPORT.md).
 
-Once the first meaningful tests exist, add one GitHub Actions job to install the
-same dependencies and run Ruff and pytest. No deployment pipeline is needed.
+## Academic scope check
 
-## Where things go
+The public course listing for 20875 (2026–2027) warns that its detailed profile
+refers to the prior year. The public profile mentions lecturer approval and
+practical open-source projects, but it is **not** confirmation that a standalone
+Streamlit app is approved for the current assignment. Verify the current
+Blackboard/project instructions and the lecturer's approval, the presentation
+requirements, the exact deadline, group rules and any AI-use rules. The
+November 27, 2026 project date is supplied by the students, not verified online.
 
-| Path | Responsibility | Status |
-| --- | --- | --- |
-| `app.py` | Page configuration and navigation | Present |
-| `.streamlit/config.toml` | Dark theme | Present |
-| `workspace/views/` | Dashboard, tasks, and planner screens | Empty states only |
-| `workspace/models.py` | Data structures and validation | Next milestone |
-| `workspace/repository.py` | SQLite persistence and serialization | Next milestone |
-| `workspace/planner.py` | Pure daily allocation algorithm | Planned |
-| `workspace/metrics.py` | Pure dashboard calculations | Planned |
-| `tests/` | Behavior and integration tests | Checklist present |
-| `data/` | Local SQLite database | Created on first persistence use |
-| `docs/` | Scope, contracts, milestones | Present |
-
-Keep SQL out of views and Streamlit imports out of business logic.
-
-## Next action
-
-Read [FIRST_MILESTONE.md](docs/FIRST_MILESTONE.md) together. Implement one task
-from validated input to SQLite to a visible list, then restart and verify it
-survives. Build editing, deletion, and completion on that foundation.
+This app intentionally excludes authentication, cloud sync, integrations,
+recurring tasks, chatbots, drag-and-drop, and complex scheduling optimization.

@@ -1,5 +1,9 @@
 # Project plan — November 11–27, 2026
 
+> Historical planning document. For implemented functionality and open verification
+> tasks see `MVP_IMPLEMENTATION.md` and `TEST_REPORT.md`.
+
+
 ## Recommendation and feasibility
 
 Proceed with a single-user Streamlit application, SQLite persistence, and a

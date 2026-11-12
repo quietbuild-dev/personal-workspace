@@ -1,4 +1,4 @@
-"""Task creation, editing, completion, and reopening."""
+"""Task creation, filtering, editing, deletion, completion, and reopening."""
 
 import logging
 import sqlite3
@@ -10,6 +10,7 @@ from workspace.models import TaskDraft
 from workspace.repository import (
     DEFAULT_DB_PATH,
     create_task,
+    delete_task,
     initialize_database,
     list_tasks,
     update_task,
@@ -23,7 +24,7 @@ if notice:
     st.success(notice)
 
 try:
-    initialize_database()
+    initialize_database(DEFAULT_DB_PATH)
 except (sqlite3.Error, OSError):
     logging.exception("Could not initialize task storage")
     st.error("Could not open task storage. Check that the project's data folder is writable.")
@@ -62,34 +63,53 @@ if submitted:
 
 st.subheader("Your tasks")
 try:
-    tasks = list_tasks()
+    tasks = list_tasks(DEFAULT_DB_PATH)
 except (sqlite3.Error, OSError):
     logging.exception("Could not load tasks")
     st.error("Could not load your tasks. Check the terminal for details.")
     st.stop()
 
 if tasks:
-    st.dataframe(
-        [
-            {
-                "Title": task.title,
-                "Category": task.category,
-                "Priority": {1: "Low", 2: "Medium", 3: "High"}[task.priority],
-                "Deadline": task.deadline.isoformat() if task.deadline else "No deadline",
-                "Remaining minutes": task.remaining_minutes,
-                "Status": task.status.capitalize(),
-            }
-            for task in tasks
-        ],
-        hide_index=True,
-        width="stretch",
-    )
+    filter_left, filter_right = st.columns(2)
+    with filter_left:
+        status_filter = st.selectbox("Status", ["All", "Open", "Completed"])
+    with filter_right:
+        categories = ["All categories"] + sorted({task.category for task in tasks})
+        category_filter = st.selectbox("Category filter", categories)
+    visible_tasks = [
+        task for task in tasks
+        if (status_filter == "All" or task.status == (
+            "pending" if status_filter == "Open" else "completed"
+        )) and (category_filter == "All categories" or task.category == category_filter)
+    ]
+    if not visible_tasks:
+        st.info("No tasks match your filters. Change a filter to view other tasks.")
+    else:
+        st.dataframe(
+            [
+                {
+                    "Title": task.title,
+                    "Category": task.category,
+                    "Priority": {1: "Low", 2: "Medium", 3: "High"}[task.priority],
+                    "Deadline": task.deadline.isoformat() if task.deadline else "No deadline",
+                    "Remaining minutes": task.remaining_minutes,
+                    "Status": task.status.capitalize(),
+                }
+                for task in visible_tasks
+            ],
+            hide_index=True,
+            width="stretch",
+        )
 else:
+    visible_tasks = []
     st.info("No tasks yet. Add your first task above.")
 
-if tasks:
+if visible_tasks:
     st.subheader("Edit a task")
-    by_id = {task.id: task for task in tasks}
+    by_id = {task.id: task for task in visible_tasks}
+    # A filter or deletion may remove the previous selection from the options.
+    if st.session_state.get("selected_task_id") not in by_id:
+        st.session_state.pop("selected_task_id", None)
     selected_id = st.selectbox(
         "Choose a task",
         options=list(by_id),
@@ -166,3 +186,30 @@ if tasks:
             st.session_state["task_notice"] = message
             st.session_state["task_edit_revision"] = revision + 1
             st.rerun()
+
+    st.divider()
+    with st.container(border=True):
+        st.subheader("Delete task")
+        st.caption("Deletion is permanent. It also removes this task from the next plan "
+                   "and all dashboard totals; it does not affect other tasks.")
+        confirmation_key = f"delete_confirm_{selected.id}"
+        if st.session_state.get("last_selected_for_delete") != selected.id:
+            st.session_state[confirmation_key] = False
+            st.session_state["last_selected_for_delete"] = selected.id
+        confirmed = st.checkbox(
+            f"I confirm permanent deletion of ‘{selected.title}’ (#{selected.id}).",
+            key=confirmation_key,
+        )
+        if st.button("Delete task permanently", disabled=not confirmed):
+            try:
+                delete_task(DEFAULT_DB_PATH, selected.id)
+            except ValueError as error:
+                st.error(str(error))
+            except (sqlite3.Error, OSError):
+                logging.exception("Could not delete task")
+                st.error("Deletion failed; your task was not intentionally removed.")
+            else:
+                st.session_state["task_notice"] = "Task deleted."
+                st.session_state.pop("selected_task_id", None)
+                st.session_state.pop("last_selected_for_delete", None)
+                st.rerun()

@@ -1,7 +1,8 @@
 # Small technical contract
 
-This document defines the next implementation steps. These models, tables,
-functions, and algorithms are not implemented in the starter yet.
+This document records the implemented MVP's design rules. The original
+contracts were written before implementation; the current callable signatures
+are documented below and in `MVP_IMPLEMENTATION.md`.
 
 ## Boundaries
 
@@ -78,13 +79,13 @@ Persist tasks and availability only. Recompute from the current saved records.
 
 ## Suggested function contracts
 
-These signatures are design examples, not code to copy into the starter yet.
+These signatures summarize the implemented API (see the code for exact defaults).
 
 ```python
 initialize_database(db_path: Path) -> None
 list_tasks(db_path: Path) -> list[Task]
 create_task(db_path: Path, draft: TaskDraft) -> Task
-update_task(db_path: Path, task: Task) -> None
+update_task(db_path: Path, task_id: int, draft: TaskDraft, remaining_minutes: int) -> Task
 delete_task(db_path: Path, task_id: int) -> None
 load_availability(db_path: Path, start: date, end: date) -> dict[date, int]
 save_availability(db_path: Path, values: dict[date, int]) -> None
@@ -95,7 +96,7 @@ generate_plan(
     today: date,
 ) -> PlanResult
 
-calculate_metrics(tasks: list[Task], plan: PlanResult, today: date) -> DashboardMetrics
+calculate_metrics(tasks: list[Task], plan: PlanResult, availability: dict[date, int], today: date) -> DashboardMetrics
 ```
 
 TaskDraft omits database-generated identity and timestamps. Keep public

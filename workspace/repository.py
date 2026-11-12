@@ -1,5 +1,6 @@
 """SQLite task storage. Each operation closes its connection."""
 
+import os
 import sqlite3
 from contextlib import closing
 from datetime import date, datetime, timezone
@@ -7,7 +8,12 @@ from pathlib import Path
 
 from workspace.models import Task, TaskDraft, revise_task
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "workspace.db"
+DEFAULT_DB_PATH = Path(
+    os.environ.get(
+        "WORKSPACE_DB_PATH",
+        str(Path(__file__).resolve().parents[1] / "data" / "workspace.db"),
+    )
+)
 
 
 def initialize_database(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -31,6 +37,14 @@ def initialize_database(db_path: Path = DEFAULT_DB_PATH) -> None:
                     OR
                     (status = 'completed' AND remaining_minutes = 0 AND completed_at IS NOT NULL)
                 )
+            )
+        """)
+        # Additive migration: existing task rows and their IDs are left unchanged.
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS daily_availability (
+                day TEXT PRIMARY KEY,
+                available_minutes INTEGER NOT NULL
+                    CHECK(available_minutes BETWEEN 0 AND 1440)
             )
         """)
 
@@ -114,3 +128,56 @@ def update_task(
             ),
         )
         return revised
+
+
+def _validate_task_id(task_id: int) -> None:
+    if type(task_id) is not int or not 1 <= task_id <= 2**63 - 1:
+        raise ValueError("Task ID must be a positive integer.")
+
+
+def delete_task(db_path: Path, task_id: int) -> None:
+    """Delete one task; an unknown ID is an error, not a silent success."""
+    _validate_task_id(task_id)
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        cursor = connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        if cursor.rowcount != 1:
+            raise ValueError("This task no longer exists. Refresh the page.")
+
+
+def _validate_availability(values: dict[date, int]) -> None:
+    for day, minutes in values.items():
+        if type(day) is not date:
+            raise ValueError("Availability keys must be calendar dates.")
+        if type(minutes) is not int or not 0 <= minutes <= 1440:
+            raise ValueError("Available minutes must be a whole number from 0 to 1440.")
+
+
+def save_availability(db_path: Path, values: dict[date, int]) -> None:
+    """Atomically upsert actual calendar dates; never repeats capacity weekly."""
+    _validate_availability(values)  # Validate everything before writing anything.
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.executemany(
+            """INSERT INTO daily_availability (day, available_minutes) VALUES (?, ?)
+               ON CONFLICT(day) DO UPDATE SET available_minutes = excluded.available_minutes""",
+            [(day.isoformat(), minutes) for day, minutes in values.items()],
+        )
+
+
+def load_availability(db_path: Path, start: date, end: date) -> dict[date, int]:
+    """Return every date in [start, end], with missing entries set to zero."""
+    from datetime import timedelta
+
+    if type(start) is not date or type(end) is not date or start > end:
+        raise ValueError("Provide an inclusive range of calendar dates in order.")
+    with closing(sqlite3.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT day, available_minutes FROM daily_availability WHERE day BETWEEN ? AND ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+    values = {date.fromisoformat(day): minutes for day, minutes in rows}
+    output: dict[date, int] = {}
+    day = start
+    while day <= end:
+        output[day] = values.get(day, 0)
+        day += timedelta(days=1)
+    return output
