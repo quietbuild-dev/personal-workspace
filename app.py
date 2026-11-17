@@ -15,7 +15,7 @@ with st.sidebar:
 page = st.navigation(
     [
         st.Page("workspace/views/home.py", title="Home", default=True),
-        st.Page("workspace/views/week.py", title="Calendar"),
+        st.Page("workspace/views/week.py", title="My Calendar"),
     ]
 )
 page.run()

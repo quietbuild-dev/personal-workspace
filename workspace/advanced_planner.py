@@ -355,6 +355,9 @@ def make_revision(
             for start, end in _gap_intervals(day, windows, occupied.get(day, []), earliest):
                 if step.deadline == day and step.deadline_minute is not None:
                     end = min(end, step.deadline_minute)
+                # New suggestions begin on a predictable five-minute boundary.
+                # Saved sessions are never rounded or silently moved.
+                start = ((start + 4) // 5) * 5
                 if end <= start:
                     continue
                 cap_left = limits.get(day, SEARCH_END - SEARCH_START) - booked.get(day, 0)

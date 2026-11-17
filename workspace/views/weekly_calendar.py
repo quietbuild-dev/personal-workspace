@@ -230,9 +230,10 @@ def calendar_html(
     .wp-day-column {position:relative; border-left:1px solid #303a38;
         background-image:linear-gradient(to bottom,#303a38 1px,transparent 1px);
         background-size:100% 51px; background-repeat:repeat-y;}
-    .wp-block {position:absolute; left:4px; right:4px; overflow:hidden; border-radius:6px;
-        text-decoration:none; display:block; cursor:pointer;
-        padding:5px 6px; font-size:11px; line-height:1.25; box-sizing:border-box;
+    .wp-scroll .wp-calendar .wp-block {position:absolute; left:4px; right:4px; overflow:hidden;
+    border-radius:6px;
+        text-decoration:none!important; display:block; cursor:pointer;
+        padding:5px 6px; font-size:12px; line-height:1.25; box-sizing:border-box;
         border-left:3px solid; overflow-wrap:anywhere;}
     .wp-study {background:#9eb5a1; color:#19231c; border-color:#c6d5c9;}
     .wp-fixed {background:#4c5e68; color:#f1f5f6; border-color:#94a7b0;}
@@ -243,6 +244,17 @@ def calendar_html(
     .wp-appointment {background:#4c5e68; color:#f1f5f6; border-color:#94a7b0;}
     .wp-other {background:#555b61; color:#f1f5f6; border-color:#929da6;}
     .wp-block:hover {filter:brightness(1.12); outline:1px solid #d7e1da;}
+    .wp-scroll .wp-calendar a.wp-block:link,.wp-scroll .wp-calendar a.wp-block:visited,
+    .wp-scroll .wp-calendar a.wp-block:hover {text-decoration:none!important;
+    color:inherit!important;}
+    .wp-scroll .wp-calendar .wp-study,.wp-scroll .wp-calendar a.wp-study:link,
+    .wp-scroll .wp-calendar a.wp-study:visited {color:#19231c!important;}
+    .wp-scroll .wp-calendar .wp-lecture,.wp-scroll .wp-calendar a.wp-lecture:link,
+    .wp-scroll .wp-calendar a.wp-lecture:visited {color:#f6f8fb!important;}
+    .wp-scroll .wp-calendar .wp-social,.wp-scroll .wp-calendar a.wp-social:link,
+    .wp-scroll .wp-calendar a.wp-social:visited {color:#f9f3fc!important;}
+    .wp-scroll .wp-calendar .wp-block-title,.wp-scroll .wp-calendar .wp-block-clock {
+        color:inherit!important;text-decoration:none!important;}
     .wp-block-title {font-weight:650; display:-webkit-box; -webkit-line-clamp:2;
         -webkit-box-orient:vertical; overflow:hidden;}
     .wp-block-clock {font-size:10px; opacity:.82; margin-top:2px;}
@@ -291,6 +303,17 @@ def calendar_html(
             if slot.day == day
         ]
         for start, end, name, kind, target in sorted(blocks, key=lambda b: (b[0], b[1], b[2])):
+            # Share horizontal space when a saved study block conflicts with an event.
+            # Both remain selectable instead of hiding one another.
+            conflict = any(
+                other_start < end
+                and start < other_end
+                and (other_kind == "study") != (kind == "study")
+                for other_start, other_end, _, other_kind, _ in blocks
+            )
+            lane_style = (
+                "left:50%;" if conflict and kind == "study" else ("right:50%;" if conflict else "")
+            )
             top = (start - lower) * px_per_minute
             height = max(8, (end - start) * px_per_minute)
             safe_title = html_escape(name, quote=True)
@@ -299,10 +322,10 @@ def calendar_html(
                 quote=True,
             )
             tag = "a" if target else "div"
-            link = f' href="?{target}"' if target else ""
+            link = f' href="?{target}" target="_self"' if target else ""
             markup.append(
                 f'<{tag} class="wp-block wp-{kind}" title="{tooltip}"{link} '
-                f'style="top:{top:.1f}px;height:{height:.1f}px">'
+                f'style="top:{top:.1f}px;height:{height:.1f}px;{lane_style}">'
                 f'<div class="wp-block-title">{safe_title}</div>'
             )
             if height >= 45:

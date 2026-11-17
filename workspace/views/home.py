@@ -2,7 +2,7 @@
 
 import logging
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import streamlit as st
 
@@ -53,6 +53,20 @@ def due_display(task, due_times, today: date) -> str:
     )
     minute = due_times.get(task.id)
     return f"Due {label}" + (f" at {format_time(minute)}" if minute is not None else "")
+
+
+def parse_due_clock(value: str) -> int | None:
+    """Accept empty input or an unambiguous 24-hour HH:MM time."""
+    text = value.strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) != 2 or not all(part.isdigit() and len(part) == 2 for part in parts):
+        raise ValueError("Enter the deadline time as HH:MM, for example 17:30.")
+    hour, minute = (int(part) for part in parts)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("Enter a valid time between 00:00 and 23:59.")
+    return hour * 60 + minute
 
 
 def _apply(action, success: str) -> None:
@@ -128,10 +142,10 @@ def _new_task(categories: tuple[str, ...]) -> None:
                     key=f"new_due_{rev}",
                 )
             with right:
-                due_time = st.time_input(
-                    "Due by (optional)",
-                    value=None,
-                    step=900,
+                due_time = st.text_input(
+                    "Due time (HH:MM)",
+                    placeholder="17:30 (optional)",
+                    max_chars=5,
                     key=f"new_due_time_{rev}",
                 )
             left, right = st.columns(2, gap="small")
@@ -147,7 +161,7 @@ def _new_task(categories: tuple[str, ...]) -> None:
                 new_id = create_quick_task(
                     DEFAULT_DB_PATH,
                     TaskDraft(title, category, due, PRIORITIES[priority], estimate),
-                    due_minute=(due_time.hour * 60 + due_time.minute) if due_time else None,
+                    due_minute=parse_due_clock(due_time),
                 )
                 st.session_state["newly_added_task"] = new_id
                 st.session_state["new_task_version"] = rev + 1
@@ -270,13 +284,47 @@ def _today(overview, now: datetime) -> None:
                 )
                 agenda.append((session.start, session.end, label, "Study"))
     with st.container(border=True):
-        st.subheader("Today's schedule")
+        st.subheader("Your day")
         if not agenda:
             st.caption("Nothing scheduled today. Add an event or accept a study suggestion.")
         for start, end, title, kind in sorted(agenda)[:9]:
             st.markdown(f"**{format_time(start)}–{format_time(end)}** · {title}")
             st.caption(kind)
         st.page_link("workspace/views/week.py", label="Open calendar")
+
+
+def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
+    """Show actionable tasks first; no separate technical workload metrics."""
+    pending = [t for t in overview.tasks if t.status == "pending"]
+    pending.sort(
+        key=lambda t: (
+            t.deadline is None,
+            t.deadline or date.max,
+            -t.priority,
+            t.id,
+        )
+    )
+    soon = [
+        t for t in pending if t.deadline is not None and t.deadline <= today + timedelta(days=7)
+    ]
+    left, right = st.columns(2, gap="small")
+    with left:
+        with st.container(border=True):
+            st.markdown("**Today's focus**")
+            for task in pending[:3]:
+                label = "High priority · " if task.priority == 3 else ""
+                st.write(f"{label}{task.title}")
+                st.caption(due_display(task, deadline_times, today))
+            if not pending:
+                st.caption("You're all caught up.")
+    with right:
+        with st.container(border=True):
+            st.markdown("**Due this week**")
+            for task in soon[:4]:
+                st.write(task.title)
+                st.caption(due_display(task, deadline_times, today))
+            if not soon:
+                st.caption("No deadlines in the next seven days.")
 
 
 def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, ...]) -> None:
@@ -388,6 +436,19 @@ def _edit_task(overview, categories, deadline_times) -> None:
                     lambda s=step, value=checked: set_checklist_done(DEFAULT_DB_PATH, s.id, value),
                     "Checklist updated.",
                 )
+        all_checked = bool(checklist) and all(item.checked for item in checklist)
+        dismissed = st.session_state.get("dismissed_done_prompt", set())
+        if task.status == "pending" and all_checked and task.id not in dismissed:
+            st.info("All checklist items are done. Mark this task complete?")
+            confirm, later = st.columns(2, gap="small")
+            if confirm.button("Mark task done", key=f"confirm_check_done_{task.id}"):
+                _apply(
+                    lambda: toggle_quick_task(DEFAULT_DB_PATH, task.id, True),
+                    "Task marked complete.",
+                )
+            if later.button("Not yet", key=f"later_check_done_{task.id}"):
+                st.session_state["dismissed_done_prompt"] = dismissed | {task.id}
+                st.rerun()
         if task.status == "pending":
             with st.form(f"new_check_{task.id}", clear_on_submit=True):
                 label = st.text_input("New checklist item")
@@ -400,29 +461,23 @@ def _edit_task(overview, categories, deadline_times) -> None:
         rev = st.session_state.get("edit_task_rev", 0)
         category = _category_input(categories, f"edit_{task.id}_{rev}", selected=task.category)
         with st.form(f"edit_task_{task.id}_{rev}"):
-            name = st.text_input("Task name", value=task.title, key=f"edit_name_{rev}")
+            name = st.text_input("Task name", value=task.title, key=f"edit_name_{task.id}_{rev}")
             left, right = st.columns(2, gap="small")
             with left:
                 due = st.date_input(
                     "Deadline (optional)",
                     value=task.deadline,
                     format="DD/MM/YYYY",
-                    key=f"edit_due_{rev}",
+                    key=f"edit_due_{task.id}_{rev}",
                 )
             with right:
                 current_due = deadline_times.get(task.id)
-                original_time = (
-                    None
-                    if current_due is None
-                    else datetime.min.replace(
-                        hour=current_due // 60, minute=current_due % 60
-                    ).time()
-                )
-                due_time = st.time_input(
-                    "Due by (optional)",
-                    value=original_time,
-                    step=900,
-                    key=f"edit_time_{rev}",
+                due_time = st.text_input(
+                    "Due time (HH:MM)",
+                    value=format_time(current_due) if current_due is not None else "",
+                    placeholder="17:30 (optional)",
+                    max_chars=5,
+                    key=f"edit_time_{task.id}_{rev}",
                 )
             left, right = st.columns(2, gap="small")
             with left:
@@ -430,14 +485,16 @@ def _edit_task(overview, categories, deadline_times) -> None:
                     "Priority",
                     list(PRIORITIES),
                     index=task.priority - 1,
-                    key=f"edit_priority_{rev}",
+                    key=f"edit_priority_{task.id}_{rev}",
                 )
             with right:
                 st.caption("Estimated time")
-                estimate = _duration_input(f"edit_estimate_{rev}", minutes=task.estimate_minutes)
+                estimate = _duration_input(
+                    f"edit_estimate_{task.id}_{rev}", minutes=task.estimate_minutes
+                )
                 st.caption("Unfinished work")
                 remaining = _duration_input(
-                    f"edit_remaining_{rev}",
+                    f"edit_remaining_{task.id}_{rev}",
                     minutes=(sum(timed_remaining) if timed_remaining else task.remaining_minutes),
                 )
             if st.form_submit_button("Save changes", type="primary"):
@@ -448,11 +505,13 @@ def _edit_task(overview, categories, deadline_times) -> None:
                         task.id,
                         TaskDraft(name, category, due, PRIORITIES[priority], estimate),
                         remaining,
-                        due_minute=(due_time.hour * 60 + due_time.minute) if due_time else None,
+                        due_minute=parse_due_clock(due_time),
                     )
                     st.session_state["edit_task_rev"] = rev + 1
+                    st.session_state.pop("open_task_details", None)
+                    st.session_state.pop("partial_task_id", None)
 
-                _apply(save, "Task updated. Check any revised calendar suggestions.")
+                _apply(save, "Task saved.")
         with st.expander("Delete task"):
             confirm = st.checkbox("I understand this also deletes scheduled study blocks")
             if st.button("Delete permanently", disabled=not confirm, key=f"delete_{task.id}"):
@@ -502,6 +561,7 @@ def main() -> None:
         elif insight.preserve.changed:
             st.info("A revised plan is available; your accepted calendar is unchanged.")
             st.page_link("workspace/views/week.py", label="Compare plans")
+    _home_priorities(overview, due_times, now.date())
     left, right = st.columns([1.08, 1], gap="medium")
     with left:
         _today(overview, now)

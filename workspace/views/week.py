@@ -21,19 +21,18 @@ from workspace.advanced_repository import (
 from workspace.manual_planning import move_proposed_block
 from workspace.planning_insights import (
     compare_plans,
-    explain_comparison,
     scenario_unavailable,
 )
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
+from workspace.views.schedule_comparison import (
+    before_after_html,
+    changed_days,
+    format_slot,
+    schedule_changes,
+)
 from workspace.views.weekly_calendar import _agenda, calendar_html, study_label
 
 TIME_CHOICES = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)] + ["24:00"]
-PERIODS = {
-    "Morning (08:00–12:00)": (8 * 60, 12 * 60),
-    "Afternoon (12:00–18:00)": (12 * 60, 18 * 60),
-    "Evening (18:00–22:00)": (18 * 60, 22 * 60),
-    "Flexible (08:00–22:00)": (8 * 60, 22 * 60),
-}
 
 
 def _as_minute(value: str) -> int:
@@ -85,62 +84,68 @@ def _event_form(snapshot, today: date) -> None:
 
 
 def _preferences(snapshot, today: date, sunday: date) -> None:
+    """One compact, date-specific study preference; never an availability setup."""
     with st.popover("Study preferences"):
-        st.caption(
-            "Choose when you'd like to study, not when you're free. "
-            "Lectures and events are excluded automatically."
-        )
         existing = {item.day: item.minutes for item in snapshot.budgets}
         preferred = {item.day: (item.start, item.end) for item in snapshot.preferences}
         day = st.date_input(
-            "Plan for date",
+            "Date",
             value=today,
             format="DD/MM/YYYY",
             min_value=today,
             max_value=sunday,
         )
+        current = preferred.get(day, (8 * 60, 22 * 60))
         with st.form("focus_preferences"):
+            left, right = st.columns(2, gap="small")
+            with left:
+                earliest = st.selectbox(
+                    "Earliest start",
+                    TIME_CHOICES[:-1],
+                    index=_time_index(current[0]),
+                )
+            with right:
+                latest = st.selectbox(
+                    "Latest finish",
+                    TIME_CHOICES[1:],
+                    index=max(0, _time_index(current[1]) - 1),
+                )
             default = existing.get(day, 120)
-            a, b = st.columns(2, gap="small")
-            with a:
+            left, right = st.columns(2, gap="small")
+            with left:
                 hours = st.number_input(
                     "Study hours", min_value=0, max_value=14, value=default // 60
                 )
-            with b:
+            with right:
                 minutes = st.selectbox(
                     "Extra minutes",
                     [0, 15, 30, 45],
                     index=[0, 15, 30, 45].index((default % 60) // 15 * 15),
                 )
-            current = preferred.get(day)
-            options = list(PERIODS)
-            default_period = next(
-                (label for label, span in PERIODS.items() if span == current), options[3]
-            )
-            period = st.selectbox(
-                "Preferred time of day", options, index=options.index(default_period)
-            )
-            scope = st.radio(
-                "Apply to", ["Just this day", "Remaining days this week"], horizontal=True
-            )
+            copy_week = st.checkbox("Use these settings for remaining days this week")
             if st.form_submit_button("Save preference", type="primary"):
-                amount = hours * 60 + minutes
-                if amount > 840:
-                    st.error("Study time cannot exceed 14 hours in one day.")
+                amount = int(hours) * 60 + int(minutes)
+                start, end = _as_minute(earliest), _as_minute(latest)
+                if end <= start:
+                    st.error("The finish time must be later than the start time.")
+                elif amount > 840:
+                    st.error("Please set no more than 14 hours per day.")
                 else:
-                    start, end = PERIODS[period]
                     days = (
-                        [day]
-                        if scope == "Just this day"
-                        else [day + timedelta(days=i) for i in range((sunday - day).days + 1)]
+                        [day + timedelta(days=i) for i in range((sunday - day).days + 1)]
+                        if copy_week
+                        else [day]
                     )
                     _save(
                         lambda: save_week_preferences(
-                            DEFAULT_DB_PATH, tuple(days), amount, start, end
+                            DEFAULT_DB_PATH,
+                            tuple(days),
+                            amount,
+                            start,
+                            end,
                         ),
-                        "Study preferences saved. No calendar changes were accepted.",
+                        "Study preferences saved. Your calendar has not changed.",
                     )
-        st.caption("Your calendar remains unchanged until you accept a proposed schedule.")
 
 
 def _selected_event(snapshot, selected_id: int) -> None:
@@ -154,32 +159,33 @@ def _selected_event(snapshot, selected_id: int) -> None:
             f"{event.kind} · {event.day:%d/%m/%Y} · "
             f"{format_time(event.start)}–{format_time(event.end)}"
         )
-        with st.form(f"edit_event_{event.id}"):
-            title = st.text_input("Event name", value=event.title)
-            kind = st.selectbox(
-                "Type",
-                EVENT_KINDS,
-                index=EVENT_KINDS.index(event.kind) if event.kind in EVENT_KINDS else 1,
-            )
-            day = st.date_input("Date", value=event.day, format="DD/MM/YYYY")
-            a, b = st.columns(2, gap="small")
-            with a:
-                start = st.selectbox("From", TIME_CHOICES[:-1], index=_time_index(event.start))
-            with b:
-                end = st.selectbox("To", TIME_CHOICES, index=_time_index(event.end))
-            if st.form_submit_button("Update event", type="primary"):
-                _save(
-                    lambda: update_fixed_event(
-                        DEFAULT_DB_PATH,
-                        event.id,
-                        title,
-                        day,
-                        _as_minute(start),
-                        _as_minute(end),
-                        kind,
-                    ),
-                    "Event updated. Review any changed suggestions.",
+        with st.expander("Edit event"):
+            with st.form(f"edit_event_{event.id}"):
+                title = st.text_input("Event name", value=event.title)
+                kind = st.selectbox(
+                    "Type",
+                    EVENT_KINDS,
+                    index=EVENT_KINDS.index(event.kind) if event.kind in EVENT_KINDS else 1,
                 )
+                day = st.date_input("Date", value=event.day, format="DD/MM/YYYY")
+                a, b = st.columns(2, gap="small")
+                with a:
+                    start = st.selectbox("From", TIME_CHOICES[:-1], index=_time_index(event.start))
+                with b:
+                    end = st.selectbox("To", TIME_CHOICES, index=_time_index(event.end))
+                if st.form_submit_button("Update event", type="primary"):
+                    _save(
+                        lambda: update_fixed_event(
+                            DEFAULT_DB_PATH,
+                            event.id,
+                            title,
+                            day,
+                            _as_minute(start),
+                            _as_minute(end),
+                            kind,
+                        ),
+                        "Event updated. Review any changed suggestions.",
+                    )
         if st.checkbox("Show delete option", key=f"event_delete_confirm_{event.id}"):
             if st.button("Delete event", key=f"event_delete_{event.id}"):
 
@@ -227,59 +233,60 @@ def _selected_session(snapshot, selected_id: int, now: datetime) -> None:
                         ),
                         "Checklist updated.",
                     )
-        begun = session.day < now.date() or (
-            session.day == now.date() and session.start <= now.hour * 60 + now.minute
-        )
-        ended = session.day < now.date() or (
-            session.day == now.date() and session.end <= now.hour * 60 + now.minute
-        )
-        options = ["Done", "Partially done"] if begun else []
-        if ended:
-            options.append("Missed")
-        options.append("Reschedule")
-        st.caption(
-            "For a future session, choose Reschedule. "
-            "You can record work once it starts, and mark it missed after it ends."
-        )
-        status = st.selectbox("What happened?", options)
-        with st.form(f"session_result_{session.id}"):
-            max_work = min(session.end - session.start, step.remaining_minutes)
-            remaining_after = None
-            if status == "Partially done":
-                st.caption("How much of this session's work is still unfinished?")
-                remaining_after = st.number_input(
-                    "Minutes left (estimate)",
-                    min_value=1,
-                    max_value=max(1, max_work - 1),
-                    value=max(1, max_work // 2),
-                )
-            if st.form_submit_button(
-                "Review new time" if status == "Reschedule" else "Save progress",
-                type="primary",
-            ):
-                if status == "Reschedule":
-                    st.session_state["reschedule_session_id"] = session.id
-                    st.session_state.pop("calendar_adjusted_proposal", None)
-                    st.session_state["show_revision"] = True
-                    st.rerun()
-                elif status == "Missed":
+        with st.expander("Update progress or reschedule"):
+            begun = session.day < now.date() or (
+                session.day == now.date() and session.start <= now.hour * 60 + now.minute
+            )
+            ended = session.day < now.date() or (
+                session.day == now.date() and session.end <= now.hour * 60 + now.minute
+            )
+            options = ["Done", "Partially done"] if begun else []
+            if ended:
+                options.append("Missed")
+            options.append("Reschedule")
+            if not begun:
+                st.caption("This session hasn't started. You can change its time.")
+            status = st.selectbox("What happened?", options)
+            with st.form(f"session_result_{session.id}"):
+                max_work = min(session.end - session.start, step.remaining_minutes)
+                remaining_after = None
+                if status == "Partially done":
+                    st.caption("How much of this session's work is still unfinished?")
+                    remaining_after = st.number_input(
+                        "Minutes left (estimate)",
+                        min_value=1,
+                        max_value=max(1, max_work - 1),
+                        value=max(1, max_work // 2),
+                    )
+                if st.form_submit_button(
+                    "Review new time" if status == "Reschedule" else "Save progress",
+                    type="primary",
+                ):
+                    if status == "Reschedule":
+                        st.session_state["reschedule_session_id"] = session.id
+                        st.session_state.pop("calendar_adjusted_proposal", None)
+                        st.session_state["show_revision"] = True
+                        st.rerun()
+                    elif status == "Missed":
 
-                    def mark_missed():
-                        record_session(DEFAULT_DB_PATH, session.id, "missed")
-                        st.query_params.clear()
-
-                    _save(mark_missed, "Session marked missed. Review a replacement below.")
-                else:
-                    if status == "Partially done" and max_work < 2:
-                        st.error("This session is too short for partial progress.")
-                    else:
-                        amount = max_work if status == "Done" else max_work - int(remaining_after)
-
-                        def save_progress():
-                            record_session(DEFAULT_DB_PATH, session.id, "done", amount)
+                        def mark_missed():
+                            record_session(DEFAULT_DB_PATH, session.id, "missed")
                             st.query_params.clear()
 
-                        _save(save_progress, "Progress saved. Review any new suggestion below.")
+                        _save(mark_missed, "Session marked missed. Review a replacement below.")
+                    else:
+                        if status == "Partially done" and max_work < 2:
+                            st.error("This session is too short for partial progress.")
+                        else:
+                            amount = (
+                                max_work if status == "Done" else max_work - int(remaining_after)
+                            )
+
+                            def save_progress():
+                                record_session(DEFAULT_DB_PATH, session.id, "done", amount)
+                                st.query_params.clear()
+
+                            _save(save_progress, "Progress saved. Review any new suggestion below.")
 
 
 def _duration(minutes: int) -> str:
@@ -287,27 +294,24 @@ def _duration(minutes: int) -> str:
     return f"{hours}h {extra:02d}m" if hours else f"{extra}m"
 
 
-def _comparison_card(label: str, assessment) -> None:
-    with st.container(border=True):
-        st.markdown(f"**{label}**")
-        st.caption(f"{_duration(assessment.scheduled_minutes)} of work placed")
-        st.caption(f"{assessment.moved_or_removed} existing blocks moved/removed")
-        if assessment.due_shortfall_minutes:
-            st.warning(f"{_duration(assessment.due_shortfall_minutes)} may miss deadlines")
-        else:
-            st.caption("No deadline shortfall found by this strategy")
+def _risk_note(risk) -> str:
+    if risk.reason == "overdue":
+        return (
+            f"{risk.title}: already overdue, with {_duration(risk.unscheduled_minutes)} unfinished."
+        )
+    return (
+        f"{risk.title}: {_duration(risk.unscheduled_minutes)} still needs a time "
+        f"before {risk.deadline:%d/%m}."
+    )
 
 
 def _what_if(snapshot, now: datetime, normal) -> None:
-    """Optional, read-only scenario that cannot be accepted by accident."""
+    """Read-only scenario: never present a simulation as an accept-able plan."""
     _, sunday = week_bounds(now.date())
     with st.popover("What if I lose study time?"):
-        st.caption("Preview an unexpected commitment. Nothing is saved.")
-        tomorrow = now.date() + timedelta(days=1)
-        initial_day = tomorrow if now.hour >= 22 and tomorrow <= sunday else now.date()
         day = st.date_input(
-            "Unavailable on",
-            value=initial_day,
+            "Which day?",
+            value=now.date(),
             min_value=now.date(),
             max_value=sunday,
             format="DD/MM/YYYY",
@@ -319,54 +323,32 @@ def _what_if(snapshot, now: datetime, normal) -> None:
             "Evening (18:00–22:00)": (1080, 1320),
             "Whole day (08:00–22:00)": (480, 1320),
         }
-        initial_period = (
-            0
-            if day > now.date() or now.hour < 12
-            else 1
-            if now.hour < 18
-            else 2
-            if now.hour < 22
-            else 3
-        )
-        label = st.selectbox(
-            "Time unavailable",
-            list(ranges),
-            index=initial_period,
-            key="scenario_period",
-        )
+        label = st.selectbox("Time unavailable", list(ranges), key="scenario_period")
         try:
             simulated = scenario_unavailable(snapshot, now, day, *ranges[label])
             alternative = compare_plans(simulated, now).preserve
         except ValueError as error:
             st.info(str(error))
+            return
+        added_shortfall = alternative.due_shortfall_minutes - normal.due_shortfall_minutes
+        if added_shortfall > 0:
+            st.warning(
+                f"If you lose this time, {_duration(added_shortfall)} more work "
+                "may be left without a study slot before its deadline."
+            )
+        elif added_shortfall < 0:
+            st.info("The revised plan found time for more deadline work in this simulation.")
         else:
-            st.markdown("**Without the change → with the change**")
-            st.write(
-                f"Work placed: {_duration(normal.scheduled_minutes)} → "
-                f"{_duration(alternative.scheduled_minutes)}"
-            )
-            st.write(
-                f"At-risk work: {_duration(normal.due_shortfall_minutes)} → "
-                f"{_duration(alternative.due_shortfall_minutes)}"
-            )
-            st.write(
-                f"Existing blocks moved/removed: {normal.moved_or_removed} → "
-                f"{alternative.moved_or_removed}"
-            )
-            if alternative.risks:
-                for risk in alternative.risks[:4]:
-                    st.warning(
-                        f"{risk.title}: {_duration(risk.unscheduled_minutes)} "
-                        f"couldn't be placed before {risk.deadline:%d/%m}."
-                    )
-            st.caption(
-                "Simulation only. Your saved events, tasks and calendar are unchanged. "
-                "A greedy placement warning does not prove no schedule exists."
-            )
+            st.info("No additional deadline problems found in this simulation.")
+        if alternative.risks:
+            with st.expander("Affected assignments"):
+                for risk in alternative.risks[:8]:
+                    st.write(_risk_note(risk))
+        st.caption("Preview only. Nothing in your calendar has changed.")
 
 
 def _review(snapshot, now: datetime) -> None:
-    """Compare alternatives, explain deadline risk, then require explicit acceptance."""
+    """Show intelligible alternatives and a read-only before/after calendar."""
     reschedule_id = st.session_state.get("reschedule_session_id")
     try:
         comparison = compare_plans(snapshot, now, reschedule_session_id=reschedule_id)
@@ -387,87 +369,87 @@ def _review(snapshot, now: datetime) -> None:
 
     with st.container(border=True):
         st.markdown("**Rescue my week**")
-        st.caption(
-            "Compare two scheduling approaches before changing anything. "
-            "Both respect saved appointments, preferred hours and deadlines."
+        st.caption("Your plans changed? See a possible adjustment before deciding.")
+        strategies = ["Change as little as possible", "Find more time for unfinished work"]
+        selected = (
+            st.segmented_control(
+                "Choose your approach",
+                strategies,
+                default=strategies[0],
+                key="calendar_plan_strategy",
+            )
+            or strategies[0]
         )
-        left, right = st.columns(2, gap="small")
-        with left:
-            _comparison_card("Keep my plans", stable)
-        with right:
-            _comparison_card("Rebuild my week", baseline)
-        st.caption(explain_comparison(comparison))
-        selected = st.segmented_control(
-            "Plan to review",
-            options=["Keep my plans", "Rebuild my week"],
-            default="Keep my plans",
-            key="calendar_plan_strategy",
-        )
-        selected = selected or "Keep my plans"
         if st.session_state.get("calendar_adjusted_strategy") != selected:
             st.session_state.pop("calendar_adjusted_proposal", None)
-        assessment = stable if selected == "Keep my plans" else baseline
+        assessment = stable if selected == strategies[0] else baseline
         adjusted = st.session_state.get("calendar_adjusted_proposal")
         proposal = (
             adjusted
-            if adjusted and adjusted.fingerprint == snapshot.fingerprint
+            if adjusted is not None and adjusted.fingerprint == snapshot.fingerprint
             else assessment.revision
         )
-        # A manually adjusted proposal has a different impact summary.
-        if adjusted and proposal is adjusted:
-            st.caption(
-                f"Manual preview: {proposal.added_or_changed} blocks added/changed; "
-                f"{proposal.removed_or_changed} existing blocks moved/removed."
-            )
-
+        changed_count = proposal.removed_or_changed + proposal.added_or_changed
+        st.caption(
+            f"{proposal.removed_or_changed} existing study blocks changed · "
+            f"{_duration(assessment.due_shortfall_minutes)} still without a suitable time"
+        )
         if assessment.risks:
-            for risk in assessment.risks[:4]:
-                prefix = "Already overdue" if risk.reason == "overdue" else "Deadline at risk"
-                st.warning(
-                    f"{prefix}: {risk.title} · {_duration(risk.unscheduled_minutes)} "
-                    f"not placed by this strategy · due {risk.deadline:%d/%m}."
-                )
-            st.caption(
-                "Risk means the current greedy strategy couldn't place all work in "
-                "eligible hours; it isn't a proof of infeasibility."
-            )
+            serious = [
+                r for r in assessment.risks if r.reason == "overdue" or r.unscheduled_minutes >= 60
+            ]
+            minor = [r for r in assessment.risks if r not in serious]
+            for risk in serious[:3]:
+                st.warning(_risk_note(risk))
+            if minor:
+                st.caption("Also needs attention: " + "; ".join(_risk_note(r) for r in minor[:3]))
+        else:
+            st.caption("This strategy found times for all work due this week.")
         if assessment.outside_week_minutes:
-            st.caption(
-                f"{_duration(assessment.outside_week_minutes)} of later-deadline "
-                "work was left outside the current week, not counted as deadline risk."
-            )
+            st.caption("Some work due later remains outside this week's plan.")
 
-        with st.expander("See exactly what would change"):
-            steps = {step.id: step for step in snapshot.steps}
-            accepted = {
-                (s.step_id, s.day, s.start, s.end): s
-                for s in snapshot.sessions
-                if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
-            }
-            proposed = {(s.step_id, s.day, s.start, s.end) for s in proposal.slots}
-            for slot in proposal.slots:
-                if (slot.step_id, slot.day, slot.start, slot.end) not in accepted:
-                    st.write(
-                        f"+ {study_label(steps.get(slot.step_id))} · "
-                        f"{slot.day:%a %d %b} {format_time(slot.start)}–{format_time(slot.end)}"
-                    )
-            for key, session in accepted.items():
-                if key not in proposed:
-                    step = steps.get(session.step_id)
-                    st.write(
-                        f"− {study_label(step)} · {session.day:%a %d %b} "
-                        f"{format_time(session.start)}–{format_time(session.end)}"
-                    )
-            if not proposal.added_or_changed and not proposal.removed_or_changed:
-                st.caption("No study blocks would move.")
+        steps = {step.id: step for step in snapshot.steps}
+        saved = tuple(
+            Slot(s.step_id, s.day, s.start, s.end)
+            for s in snapshot.sessions
+            if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
+        )
+        with st.expander("See Before → After calendars"):
+            dates = changed_days(saved, proposal.slots)
+            if dates:
+                st.markdown("**Before → After**")
+                day = st.selectbox(
+                    "Day to compare",
+                    list(dates),
+                    format_func=lambda d: d.strftime("%A, %d %B"),
+                    key="rescue_comparison_day",
+                )
+                st.markdown(
+                    before_after_html(day, snapshot.events, saved, proposal.slots, steps),
+                    unsafe_allow_html=True,
+                )
+                st.caption("Amber = old time · Green = suggested time · Faded = unchanged")
+                groups = schedule_changes(saved, proposal.slots, steps)
+                if groups:
+                    st.markdown("**Changes grouped by assignment**")
+                    for name, _step_id, removed, added in groups[:10]:
+                        st.markdown(f"**{name}**")
+                        old_times = (
+                            ", ".join(format_slot(s) for s in removed) or "Not previously planned"
+                        )
+                        new_times = (
+                            ", ".join(format_slot(s) for s in added) or "No replacement found"
+                        )
+                        st.caption(f"{old_times}  →  {new_times}")
+            elif changed_count == 0:
+                st.caption("Your saved study times would stay where they are.")
 
-        actions, scenario = st.columns([1, 1], gap="small")
-        with scenario:
+        a, b = st.columns(2, gap="small")
+        with a:
             _what_if(snapshot, now, stable)
-        with actions:
+        with b:
             if proposal.slots:
                 with st.popover("Adjust a suggested time"):
-                    steps = {step.id: step for step in snapshot.steps}
                     pos = st.selectbox(
                         "Study block",
                         range(len(proposal.slots)),
@@ -505,28 +487,32 @@ def _review(snapshot, now: datetime) -> None:
                                 st.session_state["calendar_adjusted_proposal"] = moved
                                 st.session_state["calendar_adjusted_strategy"] = selected
                                 st.rerun()
-
-        a, b = st.columns(2, gap="small")
-        if a.button(
-            "Accept this plan",
+        accept, dismiss = st.columns(2, gap="small")
+        if accept.button(
+            "Accept changes",
             type="primary",
             key="accept_rescue_plan",
             disabled=not (proposal.added_or_changed or proposal.removed_or_changed),
         ):
 
-            def accept():
+            def save_accepted():
                 accept_revision(DEFAULT_DB_PATH, proposal, datetime.now())
                 st.session_state.pop("reschedule_session_id", None)
                 st.session_state.pop("calendar_adjusted_proposal", None)
                 st.session_state.pop("calendar_adjusted_strategy", None)
 
-            _save(accept, "Plan accepted. Your calendar has been updated.")
-        if b.button("Keep current calendar", key="dismiss_rescue_plan"):
+            _save(save_accepted, "Your updated calendar is saved.")
+        if dismiss.button("Not now", key="dismiss_rescue_plan"):
             st.session_state.pop("reschedule_session_id", None)
             st.session_state.pop("calendar_adjusted_proposal", None)
             st.session_state.pop("calendar_adjusted_strategy", None)
             st.rerun()
-        st.caption("Previews never alter saved work. Approval is always required.")
+        with st.expander("How does scheduling work?"):
+            st.caption(
+                "These are estimates from two greedy scheduling approaches, not guarantees. "
+                "They may fail to find a plan even when another arrangement exists. "
+                "Nothing changes until you accept."
+            )
 
 
 def _selected_item_id(key: str) -> int | None:
@@ -545,8 +531,7 @@ def main() -> None:
         anchor_date = date.fromisoformat(date_param) if isinstance(date_param, str) else now.date()
     except ValueError:
         anchor_date = now.date()
-    st.title("Calendar")
-    st.caption("Lectures, personal events and planned work in one place")
+    st.title("My Calendar")
     try:
         snapshot = load_snapshot(DEFAULT_DB_PATH)
     except (sqlite3.Error, OSError, ValueError):
@@ -600,7 +585,7 @@ def main() -> None:
     slots = [Slot(s.step_id, s.day, s.start, s.end) for s in sessions]
     links = {(s.step_id, s.day, s.start, s.end): s.id for s in sessions}
     with st.container(border=True):
-        st.caption("Sage: planned work · Blue: lectures · Violet: social · Green: exercise")
+        st.caption("Sage: planned study · Blue: lectures · Violet: social · Green: exercise")
         st.markdown(
             calendar_html(
                 snapshot.events,
@@ -616,14 +601,14 @@ def main() -> None:
         st.caption("Select a colored block to view or edit its details.")
     if selected_week_start != monday:
         st.caption("Automatic schedule suggestions currently cover today through Sunday.")
-    with st.expander("All events and study sessions"):
+    with st.expander("Agenda by day"):
         agenda = _agenda(snapshot.events, slots, steps, selected_week_start, selected_week_end)
         if not agenda:
-            st.caption("No saved events or study sessions this week.")
-        for day, start, end, kind, title in agenda:
-            st.caption(
-                f"{day:%a %d %b} · {format_time(start)}–{format_time(end)} · {kind} · {title}"
-            )
+            st.caption("Nothing scheduled in this week.")
+        for day in sorted({row[0] for row in agenda}):
+            st.markdown(f"**{day:%A, %d %B}**")
+            for _, start, end, kind, title in (row for row in agenda if row[0] == day):
+                st.caption(f"{format_time(start)}–{format_time(end)} · {title} · {kind}")
 
 
 if __name__ == "__main__":

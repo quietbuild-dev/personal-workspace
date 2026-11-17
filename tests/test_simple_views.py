@@ -122,6 +122,48 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.assertIn("Student association", list_task_categories(self.db))
         self.assertEqual(list_tasks(self.db)[0].category, "Student association")
 
+    def test_editing_task_saves_and_closes_details(self):
+        from workspace.models import TaskDraft
+        from workspace.quick_tasks import create_quick_task
+
+        task_id = create_quick_task(self.db, TaskDraft("Study assignment"))
+        self.ui.session_state["open_task_details"] = task_id
+        self.inputs["Task name"] = "Study assignment revised"
+        self.clicks.add("Save changes")
+        self.run_page("workspace/views/home.py")
+        self.assertFalse(self.ui.session_state.get("open_task_details"))
+        self.assertEqual(list_tasks(self.db)[0].title, "Study assignment revised")
+
+    def test_completed_checklist_offers_to_complete_task(self):
+        from workspace.advanced_repository import add_step, set_checklist_done
+        from workspace.models import TaskDraft
+        from workspace.quick_tasks import create_quick_task
+
+        task_id = create_quick_task(self.db, TaskDraft("Finish reading"))
+        step_id = add_step(self.db, task_id, "Read the final chapter", "checklist")
+        set_checklist_done(self.db, step_id, True)
+        self.ui.session_state["open_task_details"] = task_id
+        self.run_page("workspace/views/home.py")
+        self.assertTrue(
+            any(
+                "All checklist items are done" in str(call.args[0])
+                for call in self.ui.info.call_args_list
+            )
+        )
+        self.clicks.add("Mark task done")
+        self.run_page("workspace/views/home.py")
+        self.assertEqual(list_tasks(self.db)[0].status, "completed")
+
+    def test_compact_hhmm_deadline_time_is_persisted(self):
+        from datetime import date, timedelta
+
+        self.inputs["Task name"] = "Submit lab report"
+        self.inputs["Deadline (optional)"] = date.today() + timedelta(days=1)
+        self.inputs["Due time (HH:MM)"] = "17:35"
+        self.clicks.add("Save task")
+        self.run_page("workspace/views/home.py")
+        self.assertEqual(load_snapshot(self.db).steps[0].deadline_minute, 17 * 60 + 35)
+
     def test_event_edit_from_calendar_selected_block(self):
         from datetime import date
 
@@ -153,7 +195,7 @@ class SimplePageSmokeTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                call.args[0] == "Plan to review"
+                call.args[0] == "Choose your approach"
                 for call in self.ui.segmented_control.call_args_list
             )
         )
