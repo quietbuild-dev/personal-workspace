@@ -11,8 +11,9 @@ from workspace.planner import generate_plan
 class MetricsTests(unittest.TestCase):
     def metrics(self, tasks, availability=None, today=TODAY):
         availability = availability or {}
-        return calculate_metrics(tasks, generate_plan(tasks, availability, today),
-                                 availability, today)
+        return calculate_metrics(
+            tasks, generate_plan(tasks, availability, today), availability, today
+        )
 
     def test_empty_state_uses_na_not_fake_percentage(self):
         metrics = self.metrics([])
@@ -25,10 +26,12 @@ class MetricsTests(unittest.TestCase):
 
     def test_completion_cohort_is_due_week_not_completed_this_week(self):
         monday = date(2026, 11, 9)
-        tasks = [make_task(1, 10, monday, completed=True),
-                 make_task(2, 25, date(2026, 11, 15)),
-                 make_task(3, 40, date(2026, 11, 16), completed=True),
-                 make_task(4, 55, None)]
+        tasks = [
+            make_task(1, 10, monday, completed=True),
+            make_task(2, 25, date(2026, 11, 15)),
+            make_task(3, 40, date(2026, 11, 16), completed=True),
+            make_task(4, 55, None),
+        ]
         metrics = self.metrics(tasks)
         self.assertEqual((metrics.due_week_completed, metrics.due_week_total), (1, 2))
         self.assertEqual(metrics.completion_percentage, 50)
@@ -45,9 +48,11 @@ class MetricsTests(unittest.TestCase):
         self.assertIn("deadlines", metrics.insight)
 
     def test_overdue_warning_takes_precedence_and_ordering(self):
-        tasks = [make_task(1, 60, TODAY - timedelta(days=1)),
-                 make_task(2, 20, TODAY + timedelta(days=2)),
-                 make_task(3, 40, TODAY + timedelta(days=1))]
+        tasks = [
+            make_task(1, 60, TODAY - timedelta(days=1)),
+            make_task(2, 20, TODAY + timedelta(days=2)),
+            make_task(3, 40, TODAY + timedelta(days=1)),
+        ]
         metrics = self.metrics(tasks)
         self.assertEqual(metrics.overdue_minutes, 60)
         self.assertEqual([t.id for t in metrics.overdue_tasks], [1])
@@ -55,8 +60,7 @@ class MetricsTests(unittest.TestCase):
         self.assertTrue(metrics.insight.startswith("1h 00m of overdue"))
 
     def test_today_focus_matches_planner_order(self):
-        tasks = [make_task(3, 40, TODAY, priority=1),
-                 make_task(2, 20, TODAY, priority=3)]
+        tasks = [make_task(3, 40, TODAY, priority=1), make_task(2, 20, TODAY, priority=3)]
         metrics = self.metrics(tasks, {TODAY: 100})
         self.assertEqual([a.task_id for a in metrics.today_allocations], [2, 3])
         self.assertEqual([a.minutes for a in metrics.today_allocations], [20, 40])

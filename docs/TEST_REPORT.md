@@ -1,5 +1,23 @@
 # MVP verification record — draft as of 12 November 2026
 
+## Advanced milestone isolated-environment checks (12 November 2026)
+
+- Previous 57 MVP tests: still passing.
+- Additional advanced scheduling, persistence, migration, parent/child integration,
+  replay prevention, stale-proposal validation, demo generation and algorithm
+  comparison tests: **82 total passed** plus 44 `unittest.subTest` cases in pytest,
+  Python 3.13.5 / pytest 9.0.2. Standard-library `unittest` also passed 82 tests.
+- Controlled baseline: 12 timed steps and a simulated missed session; both methods
+  scheduled 1080 minutes with 360-minute heuristic shortfalls. Preserving existing
+  sessions retained 9 unchanged versus 0 with full rescheduling. Runtime varies
+  by machine; see `python -m scripts.evaluate_advanced --repeats 100`.
+- **Not verified in this environment:** actual Streamlit browser rendering,
+  Windows Python 3.12, Ruff lint/format, real user database migration,
+  GitHub PR status or course rubric. Students should fill in these checks on
+  their own computer; an isolated test pass does not imply deployment completion.
+
+---
+
 This is a reproducible record, **not** a claim that the full product has been
 browser tested or installed on a new Windows environment.
 

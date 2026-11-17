@@ -36,8 +36,10 @@ class PlannerTests(unittest.TestCase):
     def test_splitting_and_inclusive_deadlines(self):
         task = make_task(1, 90, date(2026, 11, 12))
         result = generate_plan([task], {TODAY: 40, TODAY + timedelta(days=1): 50}, TODAY)
-        self.assertEqual([(a.day, a.minutes) for a in result.allocations],
-                         [(TODAY, 40), (date(2026, 11, 12), 50)])
+        self.assertEqual(
+            [(a.day, a.minutes) for a in result.allocations],
+            [(TODAY, 40), (date(2026, 11, 12), 50)],
+        )
         self.assertEqual(result.unallocated, ())
 
     def test_deadline_precedes_priority(self):
@@ -60,28 +62,30 @@ class PlannerTests(unittest.TestCase):
         due = make_task(3, 20, date(2026, 11, 14))
         result = generate_plan([undated, later, due], {TODAY: 20}, TODAY)
         self.assertEqual([a.task_id for a in result.allocations], [3])
-        self.assertEqual([(u.task_id, u.reason) for u in result.unallocated],
-                         [(2, "outside_current_plan"), (1, "outside_current_plan")])
+        self.assertEqual(
+            [(u.task_id, u.reason) for u in result.unallocated],
+            [(2, "outside_current_plan"), (1, "outside_current_plan")],
+        )
 
     def test_overdue_not_scheduled_and_completed_ignored(self):
         overdue = make_task(1, 40, TODAY - timedelta(days=1))
         completed = make_task(2, 100, TODAY, completed=True)
         result = generate_plan([overdue, completed], {TODAY: 100}, TODAY)
         self.assertFalse(result.allocations)
-        self.assertEqual([(u.task_id, u.minutes, u.reason) for u in result.unallocated],
-                         [(1, 40, "overdue")])
+        self.assertEqual(
+            [(u.task_id, u.minutes, u.reason) for u in result.unallocated], [(1, 40, "overdue")]
+        )
 
     def test_deadline_shortfall_even_with_capacity_after_deadline(self):
-        result = generate_plan([make_task(1, 90, TODAY)],
-                               {TODAY: 25, TODAY + timedelta(days=1): 200}, TODAY)
+        result = generate_plan(
+            [make_task(1, 90, TODAY)], {TODAY: 25, TODAY + timedelta(days=1): 200}, TODAY
+        )
         self.assertEqual(result.allocations[0].minutes, 25)
         self.assertEqual(result.unallocated[0].minutes, 65)
-        self.assertEqual(result.unallocated[0].reason,
-                         "insufficient_capacity_before_deadline")
+        self.assertEqual(result.unallocated[0].reason, "insufficient_capacity_before_deadline")
 
     def test_zero_capacity_and_no_recurring_next_week(self):
-        result = generate_plan([make_task(1, 30)],
-                               {TODAY - timedelta(days=7): 200}, TODAY)
+        result = generate_plan([make_task(1, 30)], {TODAY - timedelta(days=7): 200}, TODAY)
         self.assertEqual(result.allocations, ())
         self.assertEqual(result.unallocated[0].minutes, 30)
 
@@ -119,12 +123,20 @@ class PlannerTests(unittest.TestCase):
     def test_invariants_over_many_seeded_examples(self):
         randomizer = random.Random(12345)
         for _ in range(200):
-            capacities = {TODAY + timedelta(days=i): randomizer.randrange(0, 130)
-                          for i in range(5)}
-            tasks = [make_task(i, randomizer.randrange(1, 180),
-                               (None if randomizer.randrange(5) == 0 else
-                                TODAY + timedelta(days=randomizer.randrange(-3, 10))),
-                               randomizer.randrange(1, 4)) for i in range(1, 26)]
+            capacities = {TODAY + timedelta(days=i): randomizer.randrange(0, 130) for i in range(5)}
+            tasks = [
+                make_task(
+                    i,
+                    randomizer.randrange(1, 180),
+                    (
+                        None
+                        if randomizer.randrange(5) == 0
+                        else TODAY + timedelta(days=randomizer.randrange(-3, 10))
+                    ),
+                    randomizer.randrange(1, 4),
+                )
+                for i in range(1, 26)
+            ]
             result = generate_plan(tasks, capacities, TODAY)
             allocated_day = defaultdict(int)
             allocated_task = defaultdict(int)
@@ -134,8 +146,9 @@ class PlannerTests(unittest.TestCase):
                 self.assertGreater(a.minutes, 0)
                 self.assertGreaterEqual(a.day, TODAY)
                 self.assertLessEqual(a.day, week_bounds(TODAY)[1])
-                self.assertTrue(by_id[a.task_id].deadline is None or
-                                a.day <= by_id[a.task_id].deadline)
+                self.assertTrue(
+                    by_id[a.task_id].deadline is None or a.day <= by_id[a.task_id].deadline
+                )
                 allocated_day[a.day] += a.minutes
                 allocated_task[a.task_id] += a.minutes
             for day, minutes in allocated_day.items():
