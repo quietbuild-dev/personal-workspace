@@ -134,6 +134,30 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.run_page("workspace/views/week.py")
         self.assertIn("Updated lecture", [event.title for event in load_snapshot(self.db).events])
 
+    def test_deadline_risk_shows_rescue_comparison_in_calendar(self):
+        from datetime import date
+
+        from workspace.models import TaskDraft
+        from workspace.quick_tasks import create_quick_task
+
+        create_quick_task(self.db, TaskDraft("Urgent assignment", deadline=date.today()))
+        self.run_page("workspace/views/week.py")
+        self.assertTrue(
+            any("Rescue my week" in str(call.args[0]) for call in self.ui.markdown.call_args_list)
+        )
+        self.assertTrue(
+            any(
+                "What if I lose study time?" in str(call.args[0])
+                for call in self.ui.popover.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args[0] == "Plan to review"
+                for call in self.ui.segmented_control.call_args_list
+            )
+        )
+
     def test_home_done_action_without_opening_editor(self):
         self.inputs["Task name"] = "Laundry"
         self.clicks.add("Save task")

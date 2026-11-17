@@ -18,6 +18,7 @@ from workspace.advanced_repository import (
 from workspace.manual_planning import move_proposed_block
 from workspace.models import TaskDraft
 from workspace.overview import load_overview
+from workspace.planning_insights import compare_plans
 from workspace.quick_tasks import (
     create_quick_task,
     edit_quick_task,
@@ -278,7 +279,7 @@ def _today(overview, now: datetime) -> None:
         st.page_link("workspace/views/week.py", label="Open calendar")
 
 
-def _task_rows(overview, deadline_times: dict[int, int]) -> None:
+def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, ...]) -> None:
     st.subheader("Your tasks")
     all_tasks = list(overview.tasks)
     show_done = st.checkbox("Show completed tasks", value=False, key="home_show_done")
@@ -297,7 +298,7 @@ def _task_rows(overview, deadline_times: dict[int, int]) -> None:
         actually_left = (
             sum(step.remaining_minutes for step in timed) if timed else task.remaining_minutes
         )
-        with st.container(border=True):
+        with st.container(border=False):
             name, action, partial, details = st.columns([5, 1.1, 1.1, 1.3], gap="small")
             with name:
                 st.markdown(f"**{task.title}**")
@@ -356,6 +357,9 @@ def _task_rows(overview, deadline_times: dict[int, int]) -> None:
                             st.session_state.pop("partial_task_id", None)
 
                         _apply(save_partial, "Progress saved. Your schedule may need review.")
+            if st.session_state.get("open_task_details") == task.id:
+                _edit_task(overview, categories, deadline_times)
+        st.divider()
 
 
 def _edit_task(overview, categories, deadline_times) -> None:
@@ -485,17 +489,25 @@ def main() -> None:
     newly_added = st.session_state.get("newly_added_task")
     _suggestion(overview, now, newly_added)
     if not newly_added and (overview.advanced.budgets or overview.advanced.windows):
-        suggestion = proposal_notice(overview.advanced, now)
-        if suggestion.changed:
-            st.info("A revised study plan is available. Your current calendar is unchanged.")
-            st.page_link("workspace/views/week.py", label="Review suggested changes")
+        insight = compare_plans(overview.advanced, now)
+        if insight.preserve.risks:
+            top = insight.preserve.risks[0]
+            urgency = "Already overdue" if top.reason == "overdue" else "Deadline at risk"
+            st.warning(
+                f"{urgency}: {top.title} · "
+                f"{pretty_duration(top.unscheduled_minutes)} could not be fitted "
+                f"before {top.deadline:%d/%m}."
+            )
+            st.page_link("workspace/views/week.py", label="Compare rescue plans")
+        elif insight.preserve.changed:
+            st.info("A revised plan is available; your accepted calendar is unchanged.")
+            st.page_link("workspace/views/week.py", label="Compare plans")
     left, right = st.columns([1.08, 1], gap="medium")
     with left:
         _today(overview, now)
     with right:
         _new_task(categories)
-    _task_rows(overview, due_times)
-    _edit_task(overview, categories, due_times)
+    _task_rows(overview, due_times, categories)
 
 
 if __name__ == "__main__":

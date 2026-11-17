@@ -131,3 +131,25 @@ Functional automated tests are not equivalent to course approval. Confirm the
 and presentation instructions. The supplied deadline is **November 27, 2026**.
 No authentication, cloud sync, calendar integrations, chatbot, drag-and-drop or
 complex optimal scheduling is planned for this version.
+
+
+## Rescue My Week (November 2026 upgrade)
+
+The Calendar page compares two read-only scheduling proposals: keep valid study
+blocks or rebuild the remaining week. It explains what work fits, how many
+existing sessions move, and which near-term deadlines are at risk. A non-destructive
+**What if I lose study time?** preview explores the effect of unexpected commitments.
+Actual calendar changes still require explicit approval and are validated against
+the latest saved data.
+
+Home now surfaces the most urgent deadline risk and displays task details
+immediately under the selected task to reduce scrolling.
+
+- Engineering/design rationale: `docs/RESCUE_MY_WEEK.md`
+- Repeatable synthetic comparison: `python -m scripts.evaluate_rescue --repeats 30`
+- New regression tests: `tests/test_planning_insights.py`,
+  `tests/test_rescue_benchmark.py`
+
+**Note:** Planning results come from a deterministic greedy strategy and are not
+a proof of infeasibility or optimality. Day-specific preferences and saved
+calendar events constrain both strategies.

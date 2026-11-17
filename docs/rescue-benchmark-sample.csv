@@ -1,0 +1,9 @@
+tasks,events,strategy,scheduled_minutes,at_risk_minutes,blocks_moved_or_removed,unchanged_blocks,median_runtime_ms
+8,7,preserve,720,0,2,10,0.1166
+8,7,rebuild,720,0,3,9,0.0695
+16,7,preserve,1440,0,2,22,0.2096
+16,7,rebuild,1440,0,3,21,0.2542
+32,7,preserve,1440,1440,2,21,0.5333
+32,7,rebuild,1440,1440,3,20,0.5407
+64,7,preserve,1440,4320,2,21,0.9631
+64,7,rebuild,1440,4320,3,20,0.9861
