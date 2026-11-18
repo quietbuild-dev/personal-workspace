@@ -20,6 +20,7 @@ from workspace.advanced_planner import (
     SavedSession,
     StudyStep,
     TimeWindow,
+    accepted_conflicts,
     validate_revision,
 )
 from workspace.repository import initialize_database
@@ -102,6 +103,13 @@ def initialize_advanced(db_path: Path) -> None:
                 end_minute INTEGER NOT NULL,
                 CHECK(start_minute >= 0 AND end_minute <= 1440
                       AND start_minute < end_minute)
+            );
+            CREATE TABLE IF NOT EXISTS last_plan_undo (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                expected_fingerprint TEXT NOT NULL,
+                monday TEXT NOT NULL,
+                sunday TEXT NOT NULL,
+                previous_sessions TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_study_steps_task ON study_steps(task_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_week ON scheduled_sessions(day, status);
@@ -492,6 +500,12 @@ def accept_revision(db_path: Path, proposal: RevisionProposal, now: datetime) ->
                 if session.status == "planned" and proposal.monday <= session.day <= proposal.sunday
             }
             desired = {(slot.step_id, slot.day, slot.start, slot.end) for slot in proposal.slots}
+            before_rows = conn.execute(
+                "SELECT id,step_id,day,start_minute,end_minute,status,actual_minutes "
+                "FROM scheduled_sessions WHERE status='planned' AND day BETWEEN ? AND ? "
+                "ORDER BY id",
+                (proposal.monday.isoformat(), proposal.sunday.isoformat()),
+            ).fetchall()
             conn.executemany(
                 "DELETE FROM scheduled_sessions WHERE id=?",
                 [(row_id,) for key, row_id in previous.items() if key not in desired],
@@ -504,11 +518,93 @@ def accept_revision(db_path: Path, proposal: RevisionProposal, now: datetime) ->
                     for step_id, day, start, end in sorted(desired - previous.keys())
                 ],
             )
+            after_fingerprint = _fetch_snapshot(conn).fingerprint
+            conn.execute(
+                "INSERT INTO last_plan_undo "
+                "(singleton,expected_fingerprint,monday,sunday,previous_sessions) "
+                "VALUES (1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET "
+                "expected_fingerprint=excluded.expected_fingerprint, "
+                "monday=excluded.monday,sunday=excluded.sunday, "
+                "previous_sessions=excluded.previous_sessions",
+                (
+                    after_fingerprint,
+                    proposal.monday.isoformat(),
+                    proposal.sunday.isoformat(),
+                    json.dumps([dict(row) for row in before_rows]),
+                ),
+            )
             conn.commit()
             return len(proposal.slots)
         except Exception:
             conn.rollback()
             raise
+
+
+def undo_last_plan(db_path: Path, now: datetime | None = None) -> int:
+    """Atomically restore the previous accepted week only if still safe.
+
+    Any change to tasks, events, preferences or sessions after acceptance
+    invalidates undo. A restoration that would create conflicts is rejected.
+    """
+    if now is None:
+        now = datetime.now()
+    initialize_advanced(db_path)
+    with closing(_connect(db_path)) as conn:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM last_plan_undo WHERE singleton=1").fetchone()
+            if row is None:
+                raise ValueError("There is no recent plan change to undo.")
+            current = _fetch_snapshot(conn)
+            if current.fingerprint != row["expected_fingerprint"]:
+                raise StaleProposalError(
+                    "Your calendar changed since this plan was accepted. "
+                    "Review a fresh proposal instead of overwriting newer work."
+                )
+            saved = json.loads(row["previous_sessions"])
+            conn.execute(
+                "DELETE FROM scheduled_sessions WHERE status='planned' AND day BETWEEN ? AND ?",
+                (row["monday"], row["sunday"]),
+            )
+            conn.executemany(
+                "INSERT INTO scheduled_sessions "
+                "(id,step_id,day,start_minute,end_minute,status,actual_minutes) "
+                "VALUES (?,?,?,?,?,?,?)",
+                [
+                    (
+                        entry["id"],
+                        entry["step_id"],
+                        entry["day"],
+                        entry["start_minute"],
+                        entry["end_minute"],
+                        entry["status"],
+                        entry["actual_minutes"],
+                    )
+                    for entry in saved
+                ],
+            )
+            restored = _fetch_snapshot(conn)
+            if accepted_conflicts(restored, now):
+                raise ValueError(
+                    "The previous plan now conflicts with existing commitments "
+                    "or preferences. Please review a new suggestion instead."
+                )
+            conn.execute("DELETE FROM last_plan_undo WHERE singleton=1")
+            conn.commit()
+            return len(saved)
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def has_undo_plan(db_path: Path) -> bool:
+    """Show Undo only while the immediately previous plan can be restored."""
+    initialize_advanced(db_path)
+    with closing(_connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT expected_fingerprint FROM last_plan_undo WHERE singleton=1"
+        ).fetchone()
+        return bool(row and _fetch_snapshot(conn).fingerprint == row[0])
 
 
 def record_session(

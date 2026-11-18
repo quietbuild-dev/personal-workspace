@@ -69,8 +69,9 @@ def create_quick_task(
     draft: TaskDraft,
     *,
     due_minute: int | None = None,
+    schedule: bool = True,
 ) -> int:
-    """Create task, schedulable step, category and optional due time atomically."""
+    """Create a task; optionally add a timed planning step atomically."""
     validated = _validated(draft)
     _validate_due_time(validated, due_minute)
     initialize_quick_tasks(db_path)
@@ -91,15 +92,16 @@ def create_quick_task(
             ),
         )
         task_id = cursor.lastrowid
-        step_id = conn.execute(
-            """INSERT INTO study_steps
-               (task_id,title,kind,estimate_minutes,remaining_minutes,checked)
-               VALUES (?,'Focus time','timed',?,?,0)""",
-            (task_id, validated.estimate_minutes, validated.estimate_minutes),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO quick_task_links(task_id,step_id) VALUES (?,?)", (task_id, step_id)
-        )
+        if schedule:
+            step_id = conn.execute(
+                """INSERT INTO study_steps
+                   (task_id,title,kind,estimate_minutes,remaining_minutes,checked)
+                   VALUES (?,'Focus time','timed',?,?,0)""",
+                (task_id, validated.estimate_minutes, validated.estimate_minutes),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO quick_task_links(task_id,step_id) VALUES (?,?)", (task_id, step_id)
+            )
         conn.execute(
             "INSERT OR IGNORE INTO task_categories(name) VALUES (?)", (validated.category,)
         )

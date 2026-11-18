@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from datetime import date, datetime, timedelta
+from html import escape
 
 import streamlit as st
 
@@ -22,6 +23,7 @@ from workspace.planning_insights import compare_plans
 from workspace.quick_tasks import (
     create_quick_task,
     edit_quick_task,
+    enable_quick_planning,
     initialize_quick_tasks,
     toggle_quick_task,
 )
@@ -136,15 +138,15 @@ def _new_task(categories: tuple[str, ...]) -> None:
             left, right = st.columns(2, gap="small")
             with left:
                 due = st.date_input(
-                    "Deadline (optional)",
+                    "Deadline",
                     value=None,
                     format="DD/MM/YYYY",
                     key=f"new_due_{rev}",
                 )
             with right:
                 due_time = st.text_input(
-                    "Due time (HH:MM)",
-                    placeholder="17:30 (optional)",
+                    "Due time",
+                    placeholder="hh:mm",
                     max_chars=5,
                     key=f"new_due_time_{rev}",
                 )
@@ -154,6 +156,11 @@ def _new_task(categories: tuple[str, ...]) -> None:
                 estimate = _duration_input(f"new_{rev}")
             with right:
                 priority = st.selectbox("Priority", list(PRIORITIES), index=1)
+            schedule = st.checkbox(
+                "Add study time to my calendar",
+                value=True,
+                help="Uncheck for errands or tasks you don't want to schedule.",
+            )
             submitted = st.form_submit_button("Save task", type="primary")
         if submitted:
 
@@ -162,8 +169,9 @@ def _new_task(categories: tuple[str, ...]) -> None:
                     DEFAULT_DB_PATH,
                     TaskDraft(title, category, due, PRIORITIES[priority], estimate),
                     due_minute=parse_due_clock(due_time),
+                    schedule=schedule,
                 )
-                st.session_state["newly_added_task"] = new_id
+                st.session_state["newly_added_task"] = new_id if schedule else None
                 st.session_state["new_task_version"] = rev + 1
                 st.session_state.pop("home_adjusted_proposal", None)
 
@@ -293,35 +301,51 @@ def _today(overview, now: datetime) -> None:
         st.page_link("workspace/views/week.py", label="Open calendar")
 
 
+def _priority_badge(priority: int) -> str:
+    """Use the same semantic priority colors on Home and in Calendar details."""
+    colors = {3: ("High", "#CE827E"), 2: ("Medium", "#C9AE7C"), 1: ("Low", "#A5ADA7")}
+    label, color = colors.get(priority, colors[1])
+    return (
+        f'<span style="border:1px solid {color};color:{color};'
+        "padding:2px 9px;border-radius:20px;font-size:.75rem;"
+        f'font-weight:700">{label}</span>'
+    )
+
+
 def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
-    """Show actionable tasks first; no separate technical workload metrics."""
-    pending = [t for t in overview.tasks if t.status == "pending"]
+    """Prominent task names and small, consistent urgency badges."""
+    pending = [task for task in overview.tasks if task.status == "pending"]
     pending.sort(
-        key=lambda t: (
-            t.deadline is None,
-            t.deadline or date.max,
-            -t.priority,
-            t.id,
+        key=lambda task: (
+            task.deadline is None,
+            task.deadline or date.max,
+            -task.priority,
+            task.id,
         )
     )
     soon = [
-        t for t in pending if t.deadline is not None and t.deadline <= today + timedelta(days=7)
+        task
+        for task in pending
+        if task.deadline is not None and task.deadline <= today + timedelta(days=7)
     ]
-    left, right = st.columns(2, gap="small")
+    left, right = st.columns(2, gap="medium")
     with left:
         with st.container(border=True):
-            st.markdown("**Today's focus**")
+            st.subheader("Today's focus")
             for task in pending[:3]:
-                label = "High priority · " if task.priority == 3 else ""
-                st.write(f"{label}{task.title}")
-                st.caption(due_display(task, deadline_times, today))
+                name, priority = st.columns([5, 1.3], vertical_alignment="center")
+                with name:
+                    st.markdown(f"**{task.title}**")
+                with priority:
+                    st.markdown(_priority_badge(task.priority), unsafe_allow_html=True)
+                st.caption(f"{task.category} · {due_display(task, deadline_times, today)}")
             if not pending:
                 st.caption("You're all caught up.")
     with right:
         with st.container(border=True):
-            st.markdown("**Due this week**")
+            st.subheader("Due this week")
             for task in soon[:4]:
-                st.write(task.title)
+                st.markdown(f"**{task.title}**")
                 st.caption(due_display(task, deadline_times, today))
             if not soon:
                 st.caption("No deadlines in the next seven days.")
@@ -349,7 +373,10 @@ def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, 
         with st.container(border=False):
             name, action, partial, details = st.columns([5, 1.1, 1.1, 1.3], gap="small")
             with name:
-                st.markdown(f"**{task.title}**")
+                st.markdown(
+                    f"<strong>{escape(task.title)}</strong> · {_priority_badge(task.priority)}",
+                    unsafe_allow_html=True,
+                )
                 st.caption(
                     f"{task.category} · {due_display(task, deadline_times, date.today())}"
                     f" · {pretty_duration(actually_left)} left"
@@ -382,6 +409,39 @@ def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, 
                     st.session_state["open_task_details"] = None if current == task.id else task.id
                     st.rerun()
             if st.session_state.get("partial_task_id") == task.id:
+                checklist = [
+                    step
+                    for step in overview.advanced.steps
+                    if step.task_id == task.id and step.kind == "checklist"
+                ]
+                if checklist:
+                    st.markdown("**Checklist**")
+                    for item in checklist:
+                        checked = st.checkbox(
+                            item.title,
+                            value=item.checked,
+                            key=f"partial_check_{item.id}",
+                        )
+                        if checked != item.checked:
+                            _apply(
+                                lambda item_id=item.id, value=checked: set_checklist_done(
+                                    DEFAULT_DB_PATH,
+                                    item_id,
+                                    value,
+                                ),
+                                "Checklist updated.",
+                            )
+                if checklist and all(item.checked for item in checklist):
+                    st.info("All checklist items complete. Mark this task done?")
+                    if st.button("Mark task done", key=f"partial_done_{task.id}"):
+                        _apply(
+                            lambda task_id=task.id: toggle_quick_task(
+                                DEFAULT_DB_PATH,
+                                task_id,
+                                True,
+                            ),
+                            "Task completed.",
+                        )
                 with st.form(f"partial_work_{task.id}"):
                     st.caption("How much of this task is still unfinished?")
                     remaining = _duration_input(
@@ -449,6 +509,12 @@ def _edit_task(overview, categories, deadline_times) -> None:
             if later.button("Not yet", key=f"later_check_done_{task.id}"):
                 st.session_state["dismissed_done_prompt"] = dismissed | {task.id}
                 st.rerun()
+        if task.status == "pending" and not timed_remaining:
+            if st.button("Schedule this task", key=f"schedule_existing_{task.id}"):
+                _apply(
+                    lambda: enable_quick_planning(DEFAULT_DB_PATH, task.id),
+                    "This task can now receive study-time suggestions.",
+                )
         if task.status == "pending":
             with st.form(f"new_check_{task.id}", clear_on_submit=True):
                 label = st.text_input("New checklist item")
@@ -465,7 +531,7 @@ def _edit_task(overview, categories, deadline_times) -> None:
             left, right = st.columns(2, gap="small")
             with left:
                 due = st.date_input(
-                    "Deadline (optional)",
+                    "Deadline",
                     value=task.deadline,
                     format="DD/MM/YYYY",
                     key=f"edit_due_{task.id}_{rev}",
@@ -473,9 +539,9 @@ def _edit_task(overview, categories, deadline_times) -> None:
             with right:
                 current_due = deadline_times.get(task.id)
                 due_time = st.text_input(
-                    "Due time (HH:MM)",
+                    "Due time",
                     value=format_time(current_due) if current_due is not None else "",
-                    placeholder="17:30 (optional)",
+                    placeholder="hh:mm",
                     max_chars=5,
                     key=f"edit_time_{task.id}_{rev}",
                 )
@@ -490,7 +556,8 @@ def _edit_task(overview, categories, deadline_times) -> None:
             with right:
                 st.caption("Estimated time")
                 estimate = _duration_input(
-                    f"edit_estimate_{task.id}_{rev}", minutes=task.estimate_minutes
+                    f"edit_estimate_{task.id}_{rev}",
+                    minutes=task.estimate_minutes,
                 )
                 st.caption("Unfinished work")
                 remaining = _duration_input(
@@ -525,6 +592,15 @@ def _edit_task(overview, categories, deadline_times) -> None:
 
 def main() -> None:
     now = datetime.now()
+    st.markdown(
+        """<style>
+      [data-testid="stDateInput"] input, [data-testid="stTextInput"] input {
+        font-size: 0.96rem !important; min-height: 42px;
+      }
+      [data-testid="stMainBlockContainer"] h3 {letter-spacing:-.02em;}
+    </style>""",
+        unsafe_allow_html=True,
+    )
     st.title("Today")
     st.caption(f"{now:%A, %d %B %Y} · Your tasks, events and study plans")
     try:
@@ -551,16 +627,15 @@ def main() -> None:
         insight = compare_plans(overview.advanced, now)
         if insight.preserve.risks:
             top = insight.preserve.risks[0]
-            urgency = "Already overdue" if top.reason == "overdue" else "Deadline at risk"
-            st.warning(
-                f"{urgency}: {top.title} · "
-                f"{pretty_duration(top.unscheduled_minutes)} could not be fitted "
-                f"before {top.deadline:%d/%m}."
-            )
-            st.page_link("workspace/views/week.py", label="Compare rescue plans")
+            if top.reason == "overdue" or top.unscheduled_minutes >= 60:
+                st.info(
+                    f"Schedule needs attention · {top.title} — "
+                    "review a possible adjustment in My Calendar."
+                )
+                st.page_link("workspace/views/week.py", label="Review schedule")
         elif insight.preserve.changed:
             st.info("A revised plan is available; your accepted calendar is unchanged.")
-            st.page_link("workspace/views/week.py", label="Compare plans")
+            st.page_link("workspace/views/week.py", label="Review schedule")
     _home_priorities(overview, due_times, now.date())
     left, right = st.columns([1.08, 1], gap="medium")
     with left:

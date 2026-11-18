@@ -71,7 +71,7 @@ class CalendarPresentationTests(unittest.TestCase):
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0][3], "Study")
         self.assertIn("Economics exam / Revise Chapter 3 carefully", entries[0][4])
-        self.assertEqual(entries[1][3], "Fixed")
+        self.assertEqual(entries[1][3], "Appointment")
         self.assertEqual(entries[1][4], "Lecture")
 
     def test_range_includes_early_or_late_sessions(self):

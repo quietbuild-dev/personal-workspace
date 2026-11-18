@@ -258,6 +258,14 @@ def calendar_html(
     .wp-block-title {font-weight:650; display:-webkit-box; -webkit-line-clamp:2;
         -webkit-box-orient:vertical; overflow:hidden;}
     .wp-block-clock {font-size:10px; opacity:.82; margin-top:2px;}
+    .wp-priority {display:inline-block;font-weight:750;font-size:10px;
+        border-radius:12px;padding:1px 5px;margin:2px 0;
+        border:1px solid;letter-spacing:.01em;}
+    .wp-high {color:#752D31;background:#FFE9E8;border-color:#DF8788;}
+    .wp-medium {color:#65502D;background:#F5EEDB;border-color:#D4BC85;}
+    .wp-low {color:#334B3D;background:#E2ECE5;border-color:#9AAC9F;}
+    .wp-next {font-size:10px;opacity:.90;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis;}
     .wp-today {color:#d9efdc; background:#27332e;}
     </style>"""
     ]
@@ -276,6 +284,10 @@ def calendar_html(
             f'<div class="wp-clock-label" style="top:{top:.1f}px">{format_time(minute)}</div>'
         )
     markup.append("</div>")
+    pending_checklists = {}
+    for step in steps.values():
+        if getattr(step, "kind", None) == "checklist" and not step.checked:
+            pending_checklists.setdefault(step.task_id, []).append(step.title)
     for day in days:
         markup.append(f'<div class="wp-day-column" style="height:{total_height}px">')
         blocks = [
@@ -317,8 +329,30 @@ def calendar_html(
             top = (start - lower) * px_per_minute
             height = max(8, (end - start) * px_per_minute)
             safe_title = html_escape(name, quote=True)
+            related_step = None
+            if kind == "study":
+                related_step = next(
+                    (
+                        steps.get(slot.step_id)
+                        for slot in slots
+                        if slot.day == day
+                        and slot.start == start
+                        and slot.end == end
+                        and study_label(steps.get(slot.step_id)) == name
+                    ),
+                    None,
+                )
+            next_item = (
+                pending_checklists.get(getattr(related_step, "task_id", None), [None])[0]
+                if related_step
+                else None
+            )
+            due = getattr(related_step, "deadline", None) if related_step else None
+            due_note = f" | Due {due:%d/%m}" if due else ""
             tooltip = html_escape(
-                f"{name} | {day:%a %d %b} | {format_time(start)}–{format_time(end)}",
+                f"{name} | {day:%a %d %b} | {format_time(start)}–{format_time(end)}"
+                + due_note
+                + (f" | Next: {next_item}" if next_item else ""),
                 quote=True,
             )
             tag = "a" if target else "div"
@@ -328,6 +362,16 @@ def calendar_html(
                 f'style="top:{top:.1f}px;height:{height:.1f}px;{lane_style}">'
                 f'<div class="wp-block-title">{safe_title}</div>'
             )
+            if related_step and height >= 35:
+                priority = {3: "high", 2: "medium", 1: "low"}.get(
+                    getattr(related_step, "priority", 1),
+                    "low",
+                )
+                markup.append(
+                    f'<span class="wp-priority wp-{priority}">{priority.capitalize()}</span>'
+                )
+            if next_item and height >= 74:
+                markup.append(f'<div class="wp-next">Next: {html_escape(next_item)}</div>')
             if height >= 45:
                 markup.append(
                     f'<div class="wp-block-clock">{format_time(start)}–{format_time(end)}</div>'
@@ -343,7 +387,15 @@ def _agenda(events, slots, steps, monday, sunday):
     entries = []
     for event in events:
         if monday <= event.day <= sunday:
-            entries.append((event.day, event.start, event.end, "Fixed", event.title))
+            entries.append(
+                (
+                    event.day,
+                    event.start,
+                    event.end,
+                    getattr(event, "kind", "Appointment"),
+                    event.title,
+                )
+            )
     for slot in slots:
         if monday <= slot.day <= sunday:
             step = steps.get(slot.step_id)

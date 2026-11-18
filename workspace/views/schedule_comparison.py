@@ -128,8 +128,8 @@ def before_after_html(day, events, previous, proposed, steps) -> str:
       line-height:1.2;overflow-wrap:anywhere;border-left:3px solid #bdcfbe}
     .cmp-event small{display:block;font-weight:400;font-size:10px;opacity:.85}
     .cmp-study{background:#506c56;color:#f4faf5;border-color:#aac9ae}
-    .cmp-old{background:#775d35;color:#fff1d1;border:1px dashed #c7a46c;
-    border-left:3px solid #d0ac6d}
+    .cmp-old{background:#3f4a48;color:#e5ebe6;border:1px dashed #9caaa1;
+    border-left:3px solid #b3c1b6}
     .cmp-new{background:#668b70;color:#fff;border-left:3px solid #c2e6c9}
     .cmp-same{opacity:.55}
     .cmp-lecture{background:#425e76;color:#eef6ff;border-color:#95bbdf}

@@ -13,9 +13,11 @@ from workspace.advanced_repository import (
     accept_revision,
     add_fixed_event,
     delete_fixed_event,
+    has_undo_plan,
     load_snapshot,
     record_session,
     save_week_preferences,
+    undo_last_plan,
     update_fixed_event,
 )
 from workspace.manual_planning import move_proposed_block
@@ -111,20 +113,18 @@ def _preferences(snapshot, today: date, sunday: date) -> None:
                     index=max(0, _time_index(current[1]) - 1),
                 )
             default = existing.get(day, 120)
-            left, right = st.columns(2, gap="small")
-            with left:
-                hours = st.number_input(
-                    "Study hours", min_value=0, max_value=14, value=default // 60
-                )
-            with right:
-                minutes = st.selectbox(
-                    "Extra minutes",
-                    [0, 15, 30, 45],
-                    index=[0, 15, 30, 45].index((default % 60) // 15 * 15),
-                )
+            hours = st.number_input(
+                "Study hours",
+                min_value=0.0,
+                max_value=14.0,
+                value=default / 60,
+                step=0.25,
+                format="%.2f",
+                help="For example, 2.5 means two and a half hours.",
+            )
             copy_week = st.checkbox("Use these settings for remaining days this week")
             if st.form_submit_button("Save preference", type="primary"):
-                amount = int(hours) * 60 + int(minutes)
+                amount = round(float(hours) * 60)
                 start, end = _as_minute(earliest), _as_minute(latest)
                 if end <= start:
                     st.error("The finish time must be later than the start time.")
@@ -213,12 +213,28 @@ def _selected_session(snapshot, selected_id: int, now: datetime) -> None:
         return
     with st.container(border=True):
         st.subheader(study_label(step))
+        priority_name = {3: "High", 2: "Medium", 1: "Low"}.get(task.priority, "Low")
+        priority_color = {3: "red", 2: "orange", 1: "gray"}.get(task.priority)
+        st.badge(priority_name, color=priority_color)
+        if task.deadline:
+            remaining_days = (task.deadline - now.date()).days
+            due_text = (
+                "Overdue"
+                if remaining_days < 0
+                else "Due today"
+                if remaining_days == 0
+                else f"Due in {remaining_days} day(s)"
+            )
+            st.caption(due_text)
         st.caption(
             f"{session.day:%a %d %b} · {format_time(session.start)}–"
             f"{format_time(session.end)} · {task.category}"
         )
         checklist = [s for s in snapshot.steps if s.task_id == task.id and s.kind == "checklist"]
         if checklist:
+            pending_items = [item.title for item in checklist if not item.checked]
+            if pending_items:
+                st.markdown(f"**Next:** {pending_items[0]}")
             st.markdown("**Checklist**")
             from workspace.advanced_repository import set_checklist_done
 
@@ -332,10 +348,14 @@ def _what_if(snapshot, now: datetime, normal) -> None:
             return
         added_shortfall = alternative.due_shortfall_minutes - normal.due_shortfall_minutes
         if added_shortfall > 0:
-            st.warning(
-                f"If you lose this time, {_duration(added_shortfall)} more work "
-                "may be left without a study slot before its deadline."
+            message = (
+                f"Losing this time could leave {_duration(added_shortfall)} more "
+                "work without a study slot before its deadline."
             )
+            if added_shortfall >= 60:
+                st.error(message)
+            else:
+                st.info(message)
         elif added_shortfall < 0:
             st.info("The revised plan found time for more deadline work in this simulation.")
         else:
@@ -390,19 +410,18 @@ def _review(snapshot, now: datetime) -> None:
             else assessment.revision
         )
         changed_count = proposal.removed_or_changed + proposal.added_or_changed
-        st.caption(
-            f"{proposal.removed_or_changed} existing study blocks changed · "
-            f"{_duration(assessment.due_shortfall_minutes)} still without a suitable time"
-        )
+        st.caption(f"{proposal.removed_or_changed} existing study blocks would change")
         if assessment.risks:
             serious = [
                 r for r in assessment.risks if r.reason == "overdue" or r.unscheduled_minutes >= 60
             ]
             minor = [r for r in assessment.risks if r not in serious]
             for risk in serious[:3]:
-                st.warning(_risk_note(risk))
+                st.error(_risk_note(risk))
             if minor:
-                st.caption("Also needs attention: " + "; ".join(_risk_note(r) for r in minor[:3]))
+                with st.expander("Smaller unscheduled items"):
+                    for risk in minor[:5]:
+                        st.caption(_risk_note(risk))
         else:
             st.caption("This strategy found times for all work due this week.")
         if assessment.outside_week_minutes:
@@ -414,7 +433,8 @@ def _review(snapshot, now: datetime) -> None:
             for s in snapshot.sessions
             if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
         )
-        with st.expander("See Before → After calendars"):
+        with st.container():
+            st.markdown("**Before and after**")
             dates = changed_days(saved, proposal.slots)
             if dates:
                 st.markdown("**Before → After**")
@@ -428,19 +448,20 @@ def _review(snapshot, now: datetime) -> None:
                     before_after_html(day, snapshot.events, saved, proposal.slots, steps),
                     unsafe_allow_html=True,
                 )
-                st.caption("Amber = old time · Green = suggested time · Faded = unchanged")
+                st.caption(
+                    "Muted outline = previous time · Sage = proposed time · Faded = unchanged"
+                )
+                # Before/After is the primary explanation. A short summary
+                # remains optional so screen readers can access the changes.
                 groups = schedule_changes(saved, proposal.slots, steps)
                 if groups:
-                    st.markdown("**Changes grouped by assignment**")
-                    for name, _step_id, removed, added in groups[:10]:
-                        st.markdown(f"**{name}**")
-                        old_times = (
-                            ", ".join(format_slot(s) for s in removed) or "Not previously planned"
-                        )
-                        new_times = (
-                            ", ".join(format_slot(s) for s in added) or "No replacement found"
-                        )
-                        st.caption(f"{old_times}  →  {new_times}")
+                    with st.expander("Accessible change summary"):
+                        for name, _step_id, removed, added in groups[:10]:
+                            st.markdown(f"**{name}**")
+                            old_times = ", ".join(format_slot(s) for s in removed)
+                            new_times = ", ".join(format_slot(s) for s in added)
+                            st.caption(f"Previous: {old_times or 'None'}")
+                            st.caption(f"Suggested: {new_times or 'None'}")
             elif changed_count == 0:
                 st.caption("Your saved study times would stay where they are.")
 
@@ -542,15 +563,63 @@ def main() -> None:
     message = st.session_state.pop("calendar_message", None)
     if message:
         st.success(message)
+    if has_undo_plan(DEFAULT_DB_PATH):
+        if st.button("↶ Undo last accepted plan", key="undo_last_plan"):
+            _save(
+                lambda: undo_last_plan(DEFAULT_DB_PATH, datetime.now()),
+                "Previous plan restored.",
+            )
     issues = accepted_conflicts(snapshot, now)
     if issues:
-        st.warning(f"{len(issues)} existing study blocks need review.")
-    date_to_view = st.date_input(
-        "Browse date",
-        value=anchor_date,
-        format="DD/MM/YYYY",
-        key="calendar_browse_date",
+        st.info(f"{len(issues)} study blocks may need a new time.")
+    view = (
+        st.segmented_control(
+            "View",
+            ["Day", "Week"],
+            default="Day",
+            key="calendar_view",
+        )
+        or "Day"
     )
+    increment = 1 if view == "Day" else 7
+    if st.session_state.get("_nav_query_date") != date_param:
+        st.session_state["calendar_browse_date"] = anchor_date
+        st.session_state["_nav_query_date"] = date_param
+
+    def shift_date(days: int) -> None:
+        current = st.session_state.get("calendar_browse_date", anchor_date)
+        st.session_state["calendar_browse_date"] = current + timedelta(days=days)
+
+    def jump_to_today() -> None:
+        st.session_state["calendar_browse_date"] = now.date()
+
+    nav_left, nav_date, nav_right, nav_today = st.columns([1, 3, 1, 1.3])
+    with nav_left:
+        st.button(
+            "←",
+            key="calendar_previous",
+            help="Previous day or week",
+            on_click=shift_date,
+            args=(-increment,),
+        )
+    with nav_date:
+        date_to_view = st.date_input(
+            "Date",
+            value=anchor_date,
+            format="DD/MM/YYYY",
+            label_visibility="collapsed",
+            key="calendar_browse_date",
+        )
+    with nav_right:
+        st.button(
+            "→",
+            key="calendar_following",
+            help="Next day or week",
+            on_click=shift_date,
+            args=(increment,),
+        )
+    with nav_today:
+        st.button("Today", key="calendar_today", on_click=jump_to_today)
     selected_week_start, selected_week_end = week_bounds(date_to_view)
     plan_day = max(date_to_view, now.date())
     plan_sunday = week_bounds(plan_day)[1]
@@ -570,8 +639,8 @@ def main() -> None:
     # Keep urgent schedule repairs above the calendar so they are not buried
     # beneath a full-height timetable. Normal weeks remain calendar-first.
     if selected_week_start == monday:
-        _review(snapshot, now)
-    view = st.segmented_control("View", ["Day", "Week"], default="Day", key="calendar_view")
+        with st.expander("Rescue my week · Review suggested changes", expanded=False):
+            _review(snapshot, now)
     if view == "Week":
         start_day, end_day = selected_week_start, selected_week_end
     else:
@@ -601,14 +670,28 @@ def main() -> None:
         st.caption("Select a colored block to view or edit its details.")
     if selected_week_start != monday:
         st.caption("Automatic schedule suggestions currently cover today through Sunday.")
-    with st.expander("Agenda by day"):
+    with st.expander("Agenda by day", expanded=False):
         agenda = _agenda(snapshot.events, slots, steps, selected_week_start, selected_week_end)
         if not agenda:
             st.caption("Nothing scheduled in this week.")
         for day in sorted({row[0] for row in agenda}):
             st.markdown(f"**{day:%A, %d %B}**")
-            for _, start, end, kind, title in (row for row in agenda if row[0] == day):
-                st.caption(f"{format_time(start)}–{format_time(end)} · {title} · {kind}")
+            day_rows = [row for row in agenda if row[0] == day]
+            for group, types in (
+                ("Study", {"Study"}),
+                ("Lectures", {"Lecture"}),
+                (
+                    "Plans and appointments",
+                    {"Appointment", "Personal", "Social", "Exercise", "Other"},
+                ),
+            ):
+                rows = [row for row in day_rows if row[3] in types]
+                if rows:
+                    st.caption(group)
+                    for _, start, end, kind, title in rows:
+                        st.markdown(
+                            f"{format_time(start)}–{format_time(end)} · **{title}** · {kind}"
+                        )
 
 
 if __name__ == "__main__":
