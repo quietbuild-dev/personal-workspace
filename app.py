@@ -1,4 +1,4 @@
-"""Streamlit entry point. Run from this folder with: python -m streamlit run app.py."""
+"""Personal Workspace: Home and Calendar, with advanced controls in-page."""
 
 import streamlit as st
 
@@ -10,13 +10,12 @@ st.set_page_config(
 
 with st.sidebar:
     st.title("Workspace")
-    st.caption("A little clarity for your week.")
+    st.caption("Study and life, in one place.")
 
 page = st.navigation(
     [
-        st.Page("workspace/views/dashboard.py", title="Dashboard", default=True),
-        st.Page("workspace/views/tasks.py", title="Tasks & Projects"),
-        st.Page("workspace/views/planner.py", title="Smart Planner"),
+        st.Page("workspace/views/home.py", title="Home", default=True),
+        st.Page("workspace/views/week.py", title="My Calendar"),
     ]
 )
 page.run()

@@ -41,22 +41,28 @@ def calculate_metrics(
     plan: PlanResult,
     availability: dict[date, int],
     today: date,
+    structured_remaining: dict[int, int] | None = None,
 ) -> DashboardMetrics:
     monday, sunday = week_bounds(today)
     pending = [task for task in tasks if task.status == "pending"]
+    structured_remaining = structured_remaining or {}
     due_this_week = [
         task for task in tasks if task.deadline is not None and monday <= task.deadline <= sunday
     ]
     completed = sum(task.status == "completed" for task in due_this_week)
     percentage = 100 * completed / len(due_this_week) if due_this_week else None
-    overdue = tuple(sorted(
-        (t for t in pending if t.deadline is not None and t.deadline < today),
-        key=lambda t: (t.deadline, -t.priority, t.id),
-    ))
-    upcoming = tuple(sorted(
-        (t for t in pending if t.deadline is not None and t.deadline >= today),
-        key=lambda t: (t.deadline, -t.priority, t.id),
-    ))
+    overdue = tuple(
+        sorted(
+            (t for t in pending if t.deadline is not None and t.deadline < today),
+            key=lambda t: (t.deadline, -t.priority, t.id),
+        )
+    )
+    upcoming = tuple(
+        sorted(
+            (t for t in pending if t.deadline is not None and t.deadline >= today),
+            key=lambda t: (t.deadline, -t.priority, t.id),
+        )
+    )
     today_allocations = tuple(a for a in plan.allocations if a.day == today)
     scheduled = {}
     for allocation in plan.allocations:
@@ -68,8 +74,11 @@ def calculate_metrics(
         workload.append(DayWorkload(day, availability.get(day, 0), scheduled.get(day, 0)))
         day += timedelta(days=1)
 
-    residuals = {"overdue": 0, "insufficient_capacity_before_deadline": 0,
-                 "outside_current_plan": 0}
+    residuals = {
+        "overdue": 0,
+        "insufficient_capacity_before_deadline": 0,
+        "outside_current_plan": 0,
+    }
     for item in plan.unallocated:
         residuals[item.reason] += item.minutes
     overdue_minutes = residuals["overdue"]
@@ -98,7 +107,9 @@ def calculate_metrics(
 
     return DashboardMetrics(
         open_tasks=len(pending),
-        remaining_minutes=sum(task.remaining_minutes for task in pending),
+        remaining_minutes=sum(
+            structured_remaining.get(task.id, task.remaining_minutes) for task in pending
+        ),
         due_week_total=len(due_this_week),
         due_week_completed=completed,
         completion_percentage=percentage,

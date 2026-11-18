@@ -97,9 +97,7 @@ def list_tasks(db_path: Path = DEFAULT_DB_PATH) -> list[Task]:
         return [_to_task(row) for row in rows]
 
 
-def update_task(
-    db_path: Path, task_id: int, draft: TaskDraft, remaining_minutes: int
-) -> Task:
+def update_task(db_path: Path, task_id: int, draft: TaskDraft, remaining_minutes: int) -> Task:
     """Edit an existing record atomically, preserving its ID and creation time."""
     if type(task_id) is not int or not 1 <= task_id <= 2**63 - 1:
         raise ValueError("Task ID must be a positive integer.")
@@ -111,6 +109,8 @@ def update_task(
         if row is None:
             raise ValueError("This task no longer exists. Refresh the page.")
         revised = revise_task(_to_task(row), draft, remaining_minutes)
+        if revised.status == "completed" and _has_unfinished_steps(connection, task_id):
+            raise ValueError("Complete all checklist and timed steps before completing this task.")
         connection.execute(
             """UPDATE tasks SET title = ?, category = ?, deadline = ?, priority = ?,
                estimate_minutes = ?, remaining_minutes = ?, status = ?, completed_at = ?
@@ -130,6 +130,65 @@ def update_task(
         return revised
 
 
+def set_task_completion(db_path: Path, task_id: int, *, completed: bool) -> Task:
+    """Set completion directly from a list without editing task details.
+
+    Reopening a completed task restores its full estimate, because the schema
+    does not retain the remaining minutes from before completion. Users can
+    subsequently refine remaining work in the edit form.
+    """
+    _validate_task_id(task_id)
+    if type(completed) is not bool:
+        raise ValueError("Completion must be true or false.")
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise ValueError("This task no longer exists. Refresh the page.")
+        current = _to_task(row)
+        if (current.status == "completed") == completed:
+            return current  # A repeated action must not change timestamps or work.
+        if completed and _has_unfinished_steps(connection, task_id):
+            raise ValueError("Complete all checklist and timed steps before completing this task.")
+        remaining = 0 if completed else current.estimate_minutes
+        draft = TaskDraft(
+            current.title,
+            current.category,
+            current.deadline,
+            current.priority,
+            current.estimate_minutes,
+        )
+        revised = revise_task(current, draft, remaining)
+        connection.execute(
+            """UPDATE tasks SET remaining_minutes = ?, status = ?, completed_at = ?
+               WHERE id = ?""",
+            (
+                revised.remaining_minutes,
+                revised.status,
+                revised.completed_at.isoformat() if revised.completed_at else None,
+                task_id,
+            ),
+        )
+        return revised
+
+
+def _has_unfinished_steps(connection: sqlite3.Connection, task_id: int) -> bool:
+    """Legacy databases without study_steps continue to work as before."""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='study_steps'"
+    ).fetchone()
+    if not exists:
+        return False
+    row = connection.execute(
+        "SELECT 1 FROM study_steps WHERE task_id=? "
+        "AND ((kind='checklist' AND checked=0) OR "
+        "(kind='timed' AND remaining_minutes>0)) LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    return row is not None
+
+
 def _validate_task_id(task_id: int) -> None:
     if type(task_id) is not int or not 1 <= task_id <= 2**63 - 1:
         raise ValueError("Task ID must be a positive integer.")
@@ -139,6 +198,7 @@ def delete_task(db_path: Path, task_id: int) -> None:
     """Delete one task; an unknown ID is an error, not a silent success."""
     _validate_task_id(task_id)
     with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute("PRAGMA foreign_keys=ON")
         cursor = connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         if cursor.rowcount != 1:
             raise ValueError("This task no longer exists. Refresh the page.")

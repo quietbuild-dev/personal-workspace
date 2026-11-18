@@ -36,8 +36,11 @@ class ViewLogicTests(unittest.TestCase):
         self.ui.session_state = {}
         self.ui.container.side_effect = lambda **_: nullcontext()
         self.ui.form.side_effect = lambda *_, **__: nullcontext()
-        self.ui.columns.side_effect = lambda count, **_: [nullcontext()] * (
-            count if type(count) is int else len(count)
+        self.ui.expander.side_effect = lambda *_, **__: nullcontext()
+        self.ui.tabs.side_effect = lambda labels: [nullcontext() for _ in labels]
+        self.ui.time_input.side_effect = lambda label, value=None, **_: value
+        self.ui.columns.side_effect = lambda count, **_: (
+            [nullcontext()] * (count if type(count) is int else len(count))
         )
         self.ui.rerun.side_effect = UIRefresh()
         self.ui.stop.side_effect = RuntimeError("Page stopped on unexpected error")
@@ -130,8 +133,9 @@ class ViewLogicTests(unittest.TestCase):
         self.click.add("Save availability")
         self.values["availability_" + date.today().isoformat()] = 120
         self.run_page("workspace/views/planner.py")
-        self.assertEqual(load_availability(self.db, date.today(), date.today()),
-                         {date.today(): 120})
+        self.assertEqual(
+            load_availability(self.db, date.today(), date.today()), {date.today(): 120}
+        )
 
 
 if __name__ == "__main__":

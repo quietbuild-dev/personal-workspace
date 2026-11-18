@@ -29,23 +29,32 @@ def build_demo(db_path: Path, today: date) -> None:
     create_task(db_path, TaskDraft("Review algorithm notes", "University", today, 2, 90))
     create_task(db_path, TaskDraft("Read software engineering chapter", "University", soon, 1, 80))
     create_task(db_path, TaskDraft("Organize personal files", "Personal", None, 1, 50))
-    create_task(db_path, TaskDraft("Later project planning", "Work", today + timedelta(days=12),
-                                   2, 100))
-    create_task(db_path, TaskDraft("Past-due reference", "University", today - timedelta(days=2),
-                                   3, 40))
+    create_task(
+        db_path, TaskDraft("Later project planning", "Work", today + timedelta(days=12), 2, 100)
+    )
+    create_task(
+        db_path, TaskDraft("Past-due reference", "University", today - timedelta(days=2), 3, 40)
+    )
     completed_draft = TaskDraft("Submit weekly notes", "University", soon, 2, 35)
     completed = create_task(db_path, completed_draft)
     update_task(db_path, completed.id, completed_draft, 0)
-    days = {today + timedelta(days=i): amount for i, amount in enumerate([90, 80, 60])
-            if today + timedelta(days=i) <= sunday}
+    days = {
+        today + timedelta(days=i): amount
+        for i, amount in enumerate([90, 80, 60])
+        if today + timedelta(days=i) <= sunday
+    }
     save_availability(db_path, days)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("data/demo-workspace.db"))
-    parser.add_argument("--today", type=date.fromisoformat, default=date.today(),
-                        help="Fixed demo anchor date in YYYY-MM-DD form (default: today)")
+    parser.add_argument(
+        "--today",
+        type=date.fromisoformat,
+        default=date.today(),
+        help="Fixed demo anchor date in YYYY-MM-DD form (default: today)",
+    )
     arguments = parser.parse_args()
     try:
         build_demo(arguments.output, arguments.today)

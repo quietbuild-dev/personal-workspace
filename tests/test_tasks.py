@@ -64,11 +64,19 @@ class TaskTests(unittest.TestCase):
 
     def test_invalid_inputs_do_not_write(self):
         cases = [
-            {"title": "  "}, {"title": "x" * 121}, {"category": ""},
-            {"category": "x" * 41}, {"priority": 0}, {"priority": 4},
-            {"priority": True}, {"estimate_minutes": 0}, {"estimate_minutes": -5},
-            {"estimate_minutes": 1.5}, {"estimate_minutes": True},
-            {"estimate_minutes": 2**63}, {"deadline": "2026-11-26"},
+            {"title": "  "},
+            {"title": "x" * 121},
+            {"category": ""},
+            {"category": "x" * 41},
+            {"priority": 0},
+            {"priority": 4},
+            {"priority": True},
+            {"estimate_minutes": 0},
+            {"estimate_minutes": -5},
+            {"estimate_minutes": 1.5},
+            {"estimate_minutes": True},
+            {"estimate_minutes": 2**63},
+            {"deadline": "2026-11-26"},
             {"deadline": datetime(2026, 11, 26)},
         ]
         for values in cases:
@@ -80,7 +88,9 @@ class TaskTests(unittest.TestCase):
         saved = create_task(self.db, TaskDraft("Read notes"))
         with closing(sqlite3.connect(self.db)) as connection, connection:
             with self.assertRaises(sqlite3.IntegrityError):
-                connection.execute("UPDATE tasks SET status = 'completed' WHERE id = ?", (saved.id,))
+                connection.execute(
+                    "UPDATE tasks SET status = 'completed' WHERE id = ?", (saved.id,)
+                )
         self.assertEqual(list_tasks(self.db)[0].status, "pending")
 
 
