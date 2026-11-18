@@ -1,155 +1,94 @@
 # Personal Workspace
 
-A local-first **student planning system** for Bocconi Software Engineering
-(20875). Built with Python 3.12, Streamlit, SQLite and Plotly. Its technical
-contribution is constraint-aware weekly scheduling and reviewable replanning,
-not merely a calendar interface.
+A local planner for students who need to fit study time around lectures, appointments, and everything else in a week. We built it for Bocconi's Software Engineering course (20875) using Python, Streamlit, and SQLite.
 
-## Home + Calendar — simpler everyday interface
+The main idea is simple: a deadline tells you *when* work has to be finished, but not *when* you'll actually do it. Personal Workspace suggests study blocks, checks them against your calendar, and lets you review changes before saving them.
 
-The app has two main pages: **Home** (today's agenda, tasks, deadlines and
-optional scheduling suggestions) and **Calendar** (Day/Week views, events,
-saved assignment-specific study blocks, and schedule review).
+## What you can do
 
-**Tasks** have a title, optional due date and time (DD/MM/YYYY and HH:MM),
-category, priority, and estimated hours/minutes. Only the title requires manual
-input. Categories include useful defaults and reusable custom entries. Tasks
-may contain ordinary checklist items. Done and Partly are available directly
-from the list; detailed remaining-work controls appear only when needed.
+- **Keep track of work.** Add assignments and to-dos with deadlines, priorities, categories, time estimates, and checklists. Small errands can stay as to-dos without being scheduled.
+- **See your week.** Switch between day and week views. Lectures, social plans, exercise, personal events, and study sessions have different colors; task priority is shown separately.
+- **Set study preferences.** Choose an earliest start, latest finish, and maximum study hours for a day. The planner works around fixed events rather than placing study sessions on top of them.
+- **Update progress.** Complete checklist items, mark a session done or missed, or record partial work. You can inspect the assignment and its subtasks from a calendar session.
+- **Rescue a disrupted week.** Compare a plan that changes as little as possible with one that makes more room for unfinished work. Review the Before/After calendars and decide whether to accept the changes.
+- **Try a what-if scenario.** Check how losing some study time would affect the plan without changing the saved calendar.
+- **Undo an accepted plan.** Restore the previous set of study sessions when nothing important has changed since acceptance. If undo would overwrite newer work or introduce a conflict, the app refuses it.
 
-**Events** are lectures, appointments, exercise, social and personal plans.
-They have selectable start/end times and colored calendar blocks. Clicking an
-event opens editing; clicking a study block opens its associated assignment,
-checklist, and appropriate Done/Partially done/Missed/Reschedule options.
+## How scheduling works
 
-**Suggestions** appear after creating a task when eligible study preferences
-are configured. Choose daily study hours/minutes and a preferred part of the
-day for one date or the remaining week. The app finds gaps around events. You
-can adjust a suggested block, accept the week, or dismiss the proposal. **No
-accepted calendar changes without approval.** The greedy algorithm is
-constraint-aware but not globally optimal.
+Study sessions are generated from unfinished work, deadlines, daily study limits, preferred hours, and fixed commitments. The planner uses a deterministic, constraint-aware heuristic; it does **not** claim to find a mathematically optimal schedule.
 
-Existing task data, detailed study steps, schedules, and the older planner are
-preserved but the legacy controls are no longer displayed in everyday pages.
-See [Product UX release](docs/PRODUCT_UX_RELEASE.md) for the exact behavior,
-new SQLite tables, limitations, and the browser acceptance checklist, plus
-[advanced architecture](docs/ADVANCED_MILESTONE.md) for scheduling details.
+The interesting part is replanning. When something changes, the app can preserve valid existing sessions and move only what needs moving, or rebuild the remaining week to fit more work. Suggestions are previews until the user accepts them. Acceptance checks the latest saved data so an outdated proposal cannot silently replace a newer plan.
 
-## Run on Windows
+The two strategies can also be compared using the included synthetic benchmark (see `docs/RESCUE_MY_WEEK.md`).
 
-From the **existing** project directory:
+## Run locally
+
+The application runs on your computer. There is no account or hosted server to set up.
+
+**Requirements:** Python 3.12 and Git. On Windows, open PowerShell and run:
 
 ```powershell
-cd C:\Users\Win\OneDrive\Desktop\personal-workspace
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
+# Clone the repository (requires access to this private repo)
+git clone https://github.com/quietbuild-dev/personal-workspace.git
+cd personal-workspace
 
-Open the URL printed by Streamlit, normally `http://localhost:8501` (8502 is
-also fine). Stop with Ctrl+C. You can also use `Launch Personal Workspace.bat`
-from the advanced milestone for double-click launching.
-
-Fresh setup with Python 3.12:
-
-```powershell
+# Create the environment and install dependencies
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest
+
+# Start the app
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-## Safe update / existing database
+Open the local address Streamlit prints in the terminal (usually `http://localhost:8501`). Stop the app with `Ctrl+C`.
 
-An update ZIP is an **overlay**, not a replacement repository. Download it,
-extract its **contents** into your existing `personal-workspace` folder, and
-allow matching source files to be replaced. Downloading alone doesn't install
-anything. The ZIP includes **no** SQLite database, virtual environment, or
-Git history. Back up your own `data/workspace.db` before installing as an extra
-safeguard.
+### Try the sample workspace
 
-The additive tables `quick_task_links`, `day_study_budgets`,
-`task_deadline_times`, `task_categories`, `fixed_event_kinds`, and
-`day_focus_preferences` are created on first use without rewriting existing
-task records. Existing task, availability, event and accepted-session tables
-are retained. Deleted tasks cascade to their own study steps and session
-records as before; deletion requires confirmation in the UI.
-
-To run a separate demonstration database, without touching personal tasks:
+On Windows, after installing dependencies, run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.create_advanced_demo --output data/study-demo.db
-$env:WORKSPACE_DB_PATH = (Resolve-Path '.\data\study-demo.db').Path
-.\.venv\Scripts\python.exe -m streamlit run app.py
-# After stopping the demo, restore the normal database in that PowerShell window:
-Remove-Item Env:\WORKSPACE_DB_PATH
+& ".\Launch Calendar V3 Demo.bat"
 ```
 
-The demo command refuses to overwrite an existing file; use a new name if
-`data/study-demo.db` already exists.
+Despite the launcher name, it starts the **Calendar V4** code, normally at `http://localhost:8503`. The demo uses its own SQLite database (`data/calendar-v3-demo.db`) and does not use your personal `data/workspace.db`. If you want a fresh demo, reset only the demo database, never the personal one.
 
-## Checks before pushing to GitHub
+## Tests
 
 ```powershell
-.\.venv\Scripts\python.exe -m ruff check --fix .
-.\.venv\Scripts\python.exe -m ruff format .
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
-.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m scripts.check_ui
 ```
 
-The assistant's Python 3.13 environment passed **126 automated Python tests
-and 49 subtests**, including the previous 113. A standalone Chromium calendar
-alignment check passed. Ruff and actual Streamlit smoke/browser checks could
-not be run here because their packages were unavailable; run them locally on
-Python 3.12 and use the checklist in
-[docs/PRODUCT_UX_RELEASE.md](docs/PRODUCT_UX_RELEASE.md). Do not merge until
-all local checks pass.
+At the Calendar V4 checkpoint, **150 tests and 58 subtests passed**, Ruff and formatting were clean, and the Home/Calendar smoke checks passed on Windows. The smoke check is not a substitute for clicking through the app in a browser.
 
-## Key modules
+For a repeatable comparison of the two replanning strategies:
 
-| Module | Purpose |
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_rescue --repeats 30
+```
+
+## Where the code lives
+
+| Path | Role |
 | --- | --- |
-| `app.py` | Two-page Home and Calendar navigation |
-| `workspace/views/home.py` | Today's agenda, task entry, actions, custom categories and suggestions |
-| `workspace/views/week.py` | Browsable Day/Week calendar, events, study preferences and progress |
-| `workspace/views/weekly_calendar.py` | Aligned, colored, clickable day/week HTML calendar |
-| `workspace/models.py` | Immutable tasks and validation |
-| `workspace/repository.py` | Legacy SQLite task persistence and daily availability |
-| `workspace/advanced_repository.py` | Study steps, daily budgets, fixed events, accepted schedule, atomic approval |
-| `workspace/advanced_planner.py` | Pure deterministic scheduling and validation |
-| `workspace/quick_tasks.py` | Additive quick-task linkage and atomic lifecycle |
-| `workspace/simple_planning.py` | Read-only proposal summary for Home and Calendar |
-| `workspace/manual_planning.py` | Validate a user's proposed time changes without saving |
-| `workspace/overview.py`, `workspace/metrics.py` | Shared saved-data calculations |
-| `tests/`, `scripts/` | Regression tests and safe demo/UI smoke utilities |
+| `app.py` | Streamlit entry point and page navigation |
+| `workspace/views/home.py` | Tasks, deadlines, checklists, and today's focus |
+| `workspace/views/week.py` | Calendar, events, study preferences, and schedule review |
+| `workspace/views/weekly_calendar.py` | Day/week calendar rendering |
+| `workspace/views/schedule_comparison.py` | Before/After schedule comparison |
+| `workspace/advanced_planner.py` | Scheduling rules and proposal generation |
+| `workspace/planning_insights.py` | Replanning strategies, comparisons, and risk summaries |
+| `workspace/advanced_repository.py` | SQLite persistence, accepted plans, and safe undo |
+| `workspace/quick_tasks.py` | Task creation, editing, and optional scheduling |
+| `tests/` and `scripts/` | Automated tests, demos, and evaluation scripts |
 
-## Course submission status
+More implementation notes are in `docs/RESCUE_MY_WEEK.md` and `docs/CALENDAR_V4_RELEASE.md`.
 
-Functional automated tests are not equivalent to course approval. Confirm the
-2026 course rubric, lecturer approval, teamwork/AI policies, project deadline,
-and presentation instructions. The supplied deadline is **November 27, 2026**.
-No authentication, cloud sync, calendar integrations, chatbot, drag-and-drop or
-complex optimal scheduling is planned for this version.
+## Current scope
 
+This is a local, single-user university project, not a calendar service. It has no cloud sync, Google Calendar integration, collaboration inside the app, or guaranteed optimal scheduling. Some UI details still need refinement, but the core task, scheduling, replanning, and persistence flows are implemented and covered by automated tests.
 
-## Rescue My Week (November 2026 upgrade)
-
-The Calendar page compares two read-only scheduling proposals: keep valid study
-blocks or rebuild the remaining week. It explains what work fits, how many
-existing sessions move, and which near-term deadlines are at risk. A non-destructive
-**What if I lose study time?** preview explores the effect of unexpected commitments.
-Actual calendar changes still require explicit approval and are validated against
-the latest saved data.
-
-Home now surfaces the most urgent deadline risk and displays task details
-immediately under the selected task to reduce scrolling.
-
-- Engineering/design rationale: `docs/RESCUE_MY_WEEK.md`
-- Repeatable synthetic comparison: `python -m scripts.evaluate_rescue --repeats 30`
-- New regression tests: `tests/test_planning_insights.py`,
-  `tests/test_rescue_benchmark.py`
-
-**Note:** Planning results come from a deterministic greedy strategy and are not
-a proof of infeasibility or optimality. Day-specific preferences and saved
-calendar events constrain both strategies.
+Personal SQLite databases, virtual environments, and local secrets are excluded from Git. If you work on the project with someone else, share code through GitHub rather than exchanging database files.
