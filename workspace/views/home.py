@@ -559,17 +559,14 @@ def _edit_task(overview, categories, deadline_times) -> None:
         parents = [
             e.prerequisite_id for e in overview.advanced.dependencies if e.task_id == task.id
         ]
-        with st.expander("Prerequisites", expanded=bool(parents)):
-            st.caption(
-                "Plan this task after its prerequisites. Unchecked prerequisite checklist "
-                "items block planning. Reserved study time does not count as completion."
-            )
+        with st.expander("Depends on other tasks", expanded=bool(parents)):
+            st.caption("Choose tasks to finish first. The planner respects their order.")
             with st.form(f"dependencies_{task.id}"):
                 selected_parents = st.multiselect(
                     "Finish these tasks first",
                     list(others),
                     default=parents,
-                    format_func=lambda i: f"{others[i]} (#{i})",
+                    format_func=lambda i: others[i],
                     key=f"prerequisites_{task.id}",
                 )
                 if st.form_submit_button("Save prerequisites"):
@@ -620,62 +617,66 @@ def _edit_task(overview, categories, deadline_times) -> None:
                         lambda: add_step(DEFAULT_DB_PATH, task.id, label, "checklist"),
                         "Checklist item added.",
                     )
-        st.markdown("**Edit task**")
-        rev = st.session_state.get("edit_task_rev", 0)
-        category = _category_input(categories, f"edit_{task.id}_{rev}", selected=task.category)
-        with st.form(f"edit_task_{task.id}_{rev}"):
-            name = st.text_input("Task name", value=task.title, key=f"edit_name_{task.id}_{rev}")
-            left, right = st.columns(2, gap="small")
-            with left:
-                due = st.date_input(
-                    "Deadline",
-                    value=task.deadline,
-                    format="DD/MM/YYYY",
-                    key=f"edit_due_{task.id}_{rev}",
+        with st.expander("Edit task details", expanded=False):
+            rev = st.session_state.get("edit_task_rev", 0)
+            category = _category_input(categories, f"edit_{task.id}_{rev}", selected=task.category)
+            with st.form(f"edit_task_{task.id}_{rev}"):
+                name = st.text_input(
+                    "Task name", value=task.title, key=f"edit_name_{task.id}_{rev}"
                 )
-            with right:
-                current_due = deadline_times.get(task.id)
-                due_time = st.text_input(
-                    "Due time",
-                    value=format_time(current_due) if current_due is not None else "",
-                    placeholder="hh:mm",
-                    max_chars=5,
-                    key=f"edit_time_{task.id}_{rev}",
-                )
-            left, right = st.columns(2, gap="small")
-            with left:
-                priority = st.selectbox(
-                    "Priority",
-                    list(PRIORITIES),
-                    index=task.priority - 1,
-                    key=f"edit_priority_{task.id}_{rev}",
-                )
-            with right:
-                st.caption("Estimated time")
-                estimate = _duration_input(
-                    f"edit_estimate_{task.id}_{rev}",
-                    minutes=task.estimate_minutes,
-                )
-                st.caption("Unfinished work")
-                remaining = _duration_input(
-                    f"edit_remaining_{task.id}_{rev}",
-                    minutes=(sum(timed_remaining) if timed_remaining else task.remaining_minutes),
-                )
-            if st.form_submit_button("Save changes", type="primary"):
-
-                def save():
-                    edit_quick_task(
-                        DEFAULT_DB_PATH,
-                        task.id,
-                        TaskDraft(name, category, due, PRIORITIES[priority], estimate),
-                        remaining,
-                        due_minute=parse_due_clock(due_time),
+                left, right = st.columns(2, gap="small")
+                with left:
+                    due = st.date_input(
+                        "Deadline",
+                        value=task.deadline,
+                        format="DD/MM/YYYY",
+                        key=f"edit_due_{task.id}_{rev}",
                     )
-                    st.session_state["edit_task_rev"] = rev + 1
-                    st.session_state.pop("open_task_details", None)
-                    st.session_state.pop("partial_task_id", None)
+                with right:
+                    current_due = deadline_times.get(task.id)
+                    due_time = st.text_input(
+                        "Due time",
+                        value=format_time(current_due) if current_due is not None else "",
+                        placeholder="hh:mm",
+                        max_chars=5,
+                        key=f"edit_time_{task.id}_{rev}",
+                    )
+                left, right = st.columns(2, gap="small")
+                with left:
+                    priority = st.selectbox(
+                        "Priority",
+                        list(PRIORITIES),
+                        index=task.priority - 1,
+                        key=f"edit_priority_{task.id}_{rev}",
+                    )
+                with right:
+                    st.caption("Estimated time")
+                    estimate = _duration_input(
+                        f"edit_estimate_{task.id}_{rev}",
+                        minutes=task.estimate_minutes,
+                    )
+                    st.caption("Unfinished work")
+                    remaining = _duration_input(
+                        f"edit_remaining_{task.id}_{rev}",
+                        minutes=(
+                            sum(timed_remaining) if timed_remaining else task.remaining_minutes
+                        ),
+                    )
+                if st.form_submit_button("Save changes", type="primary"):
 
-                _apply(save, "Task saved.")
+                    def save():
+                        edit_quick_task(
+                            DEFAULT_DB_PATH,
+                            task.id,
+                            TaskDraft(name, category, due, PRIORITIES[priority], estimate),
+                            remaining,
+                            due_minute=parse_due_clock(due_time),
+                        )
+                        st.session_state["edit_task_rev"] = rev + 1
+                        st.session_state.pop("open_task_details", None)
+                        st.session_state.pop("partial_task_id", None)
+
+                    _apply(save, "Task saved.")
         with st.expander("Delete task"):
             confirm = st.checkbox("I understand this also deletes scheduled study blocks")
             if st.button("Delete permanently", disabled=not confirm, key=f"delete_{task.id}"):

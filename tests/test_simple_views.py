@@ -188,14 +188,15 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.assertTrue(
             any("Rescue my week" in str(call.args[0]) for call in self.ui.markdown.call_args_list)
         )
-        self.assertTrue(
+        # Optional what-if tools are hidden until a plan is previewed.
+        self.assertFalse(
             any(
                 "What if I lose study time?" in str(call.args[0])
                 for call in self.ui.popover.call_args_list
             )
         )
         labels = [call.args[0] for call in self.ui.button.call_args_list]
-        self.assertIn("Generate goal preview", labels)
+        self.assertIn("Preview schedule", labels)
         self.assertIn(
             "What matters most this week?",
             [call.args[0] for call in self.ui.selectbox.call_args_list],
