@@ -2,3 +2,4 @@ streamlit>=1.46,<2
 plotly>=5.24,<7
 ortools>=9.12,<10
 pywebview>=6.2,<7; sys_platform == "win32"
+tzdata>=2025.2,<2028

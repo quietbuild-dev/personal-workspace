@@ -48,6 +48,7 @@ from workspace.task_progress import (
 from workspace.theme import insight_card, priority_badge, stat_card
 from workspace.views.home_briefing import render_daily_briefing, render_deadline_runway
 from workspace.views.settings import render_form
+from workspace.views.weekly_replay import render_weekly_replay
 from workspace.workload_summary import COLORS, ORDER, workload_breakdown
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
@@ -1002,6 +1003,7 @@ def main() -> None:
     # Full-width chart avoids a long right-hand column and unused left-hand space.
     st.markdown(_weekly_workload(overview, now.date()), unsafe_allow_html=True)
     render_deadline_runway(overview, now)
+    render_weekly_replay(overview.advanced, now, DEFAULT_DB_PATH)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,72 @@
+PERSONAL WORKSPACE - Schedule Lab + Weekly Replay + .ics Calendar Import
+
+Install the ZIP only after the latest Energy Today / Smart Capture features
+are merged into GitHub main. The installer checks source anchors and refuses
+to overwrite an unfamiliar Home or Calendar implementation.
+
+A. Stop Streamlit (Ctrl+C) and close the desktop app. In PowerShell:
+
+cd "C:\Users\Win\OneDrive\Desktop\personal-workspace"
+$changes = @(git status --porcelain --untracked-files=no)
+if ($changes.Count -gt 0) { throw "Uncommitted changes. Stop." }
+git fetch origin
+if ($LASTEXITCODE -ne 0) { throw "Fetch failed" }
+git switch main
+if ($LASTEXITCODE -ne 0) { throw "Switch failed" }
+git pull --ff-only origin main
+if ($LASTEXITCODE -ne 0) { throw "Pull failed" }
+if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) { throw "Main mismatch" }
+git switch -c feat/scheduler-replay-calendar-import
+if ($LASTEXITCODE -ne 0) { throw "Branch failed" }
+
+B. Extract ZIP downloaded to Downloads, install and check:
+
+Expand-Archive -LiteralPath "$env:USERPROFILE\Downloads\smart-scheduling-weekly-replay-calendar-import-patch.zip" -DestinationPath . -Force
+.\.venv\Scripts\python.exe -m scripts.install_scheduler_replay_import
+if ($LASTEXITCODE -ne 0) { throw "Installation failed; stop" }
+.\.venv\Scripts\python.exe -m pip install "tzdata>=2025.2,<2028"
+.\.venv\Scripts\python.exe -m ruff check . --fix
+.\.venv\Scripts\python.exe -m ruff check .
+if ($LASTEXITCODE -ne 0) { throw "Ruff failed; stop" }
+$testDir = Join-Path $env:USERPROFILE ("Downloads\pw-suite-" + [guid]::NewGuid().ToString("N"))
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp "$testDir"
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; stop" }
+.\.venv\Scripts\python.exe -m scripts.check_optimizer_ui
+if ($LASTEXITCODE -ne 0) { throw "Optimizer checks failed; stop" }
+
+C. To try an isolated demo (no personal data):
+
+$demo = Join-Path $env:USERPROFILE ("Downloads\pw-scheduler-demo-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".db")
+.\.venv\Scripts\python.exe -m scripts.create_scheduler_lab_demo --output "$demo"
+$env:WORKSPACE_DB_PATH = $demo
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.port 8510
+
+Open http://localhost:8510
+Calendar > Schedule Lab > What if I lose time? (use STRESS_DAY from demo; 14:00-16:00)
+Calendar > Import commitments (.ics) > select the demo .ics from Downloads
+Home > Weekly replay > Last week: should show 55 minutes completed
+
+Stop Streamlit with Ctrl+C:
+Remove-Item Env:WORKSPACE_DB_PATH -ErrorAction SilentlyContinue
+
+D. Commit if everything passes and looks good:
+
+git add -- workspace/schedule_lab.py workspace/views/schedule_lab.py workspace/weekly_replay.py workspace/replay_audit.py workspace/views/weekly_replay.py workspace/calendar_import.py workspace/views/calendar_import.py workspace/views/home.py workspace/views/week.py tests/test_schedule_lab_replay_import.py scripts/install_scheduler_replay_import.py scripts/create_scheduler_lab_demo.py docs/SCHEDULER_REPLAY_CALENDAR_IMPORT.md docs/INSTALL_SCHEDULER_REPLAY_IMPORT_WINDOWS.txt requirements.txt
+git diff --cached --check
+git diff --cached --stat
+git diff --cached --name-only
+git commit -m "Add explainable scheduling lab, weekly replay and safe calendar import"
+git push -u origin HEAD
+
+E. Create a pull request from feat/scheduler-replay-calendar-import to main in GitHub,
+then merge only after tests/visual checks. After GitHub says Merged:
+
+git switch main
+git pull --ff-only origin main
+if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) { throw "Main mismatch" }
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\scripts\create_desktop_shortcut.ps1"
+git status -sb
+git log -1 --oneline
+
+Open Personal Workspace using the desktop shortcut. Verify Home and Calendar.
+No database backup is overwritten; installer backups are created in Downloads.
