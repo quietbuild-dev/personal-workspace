@@ -34,6 +34,7 @@ from workspace.planning_insights import (
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
 from workspace.study_dna import load_study_dna, required_task_ids
 from workspace.theme import priority_badge
+from workspace.views.energy_today import render_energy_today
 from workspace.views.goal_preview import choose_goal_preview
 from workspace.views.life_time import render_time_protection
 from workspace.views.schedule_comparison import (
@@ -733,6 +734,7 @@ def main() -> None:
     # Keep urgent schedule repairs above the calendar so they are not buried
     # beneath a full-height timetable. Normal weeks remain calendar-first.
     if selected_week_start == monday:
+        render_energy_today(snapshot, now, DEFAULT_DB_PATH)
         render_time_protection(snapshot, now, DEFAULT_DB_PATH)
         with st.expander(
             "Review a new plan",
