@@ -46,6 +46,7 @@ from workspace.task_progress import (
     save_progress_preference,
 )
 from workspace.theme import insight_card, priority_badge, stat_card
+from workspace.views.home_briefing import render_daily_briefing, render_deadline_runway
 from workspace.views.settings import render_form
 from workspace.workload_summary import COLORS, ORDER, workload_breakdown
 
@@ -964,6 +965,7 @@ def main() -> None:
         st.success(message)
 
     pending = [task for task in overview.tasks if task.status == "pending"]
+    render_daily_briefing(overview, now)
     upcoming = sum(
         task.deadline is not None and now.date() <= task.deadline <= now.date() + timedelta(days=7)
         for task in pending
@@ -999,6 +1001,7 @@ def main() -> None:
     _home_priorities(overview, due_times, now.date())
     # Full-width chart avoids a long right-hand column and unused left-hand space.
     st.markdown(_weekly_workload(overview, now.date()), unsafe_allow_html=True)
+    render_deadline_runway(overview, now)
 
 
 if __name__ == "__main__":
