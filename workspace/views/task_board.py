@@ -12,6 +12,7 @@ from workspace.quick_tasks import initialize_quick_tasks
 from workspace.repository import DEFAULT_DB_PATH
 from workspace.theme import stat_card
 from workspace.views.home import _new_task, _suggestion, _task_rows
+from workspace.views.smart_capture import render_smart_capture
 
 
 def main() -> None:
@@ -56,6 +57,7 @@ def main() -> None:
     if message:
         st.success(message)
     _suggestion(overview, now, st.session_state.get("newly_added_task"))
+    render_smart_capture(categories, DEFAULT_DB_PATH)
     with st.expander("+ Add a task", expanded=False):
         _new_task(categories)
     selected = st.session_state.get("task_board_selected_task")
