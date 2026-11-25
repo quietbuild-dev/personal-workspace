@@ -15,3 +15,6 @@ data/*
 .streamlit/secrets.toml
 .DS_Store
 Thumbs.db
+.uv-cache/
+.uv-python/
+.review/

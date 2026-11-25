@@ -194,15 +194,11 @@ class SimplePageSmokeTests(unittest.TestCase):
                 for call in self.ui.popover.call_args_list
             )
         )
-        # The two actual buttons replace the old selector + non-clickable cards.
         labels = [call.args[0] for call in self.ui.button.call_args_list]
-        self.assertTrue(any("Change as little as possible" in item for item in labels))
-        self.assertTrue(any("Find more time for unfinished work" in item for item in labels))
-        self.assertFalse(
-            any(
-                call.args[0] == "Choose your approach"
-                for call in self.ui.segmented_control.call_args_list
-            )
+        self.assertIn("Generate goal preview", labels)
+        self.assertIn(
+            "What matters most this week?",
+            [call.args[0] for call in self.ui.selectbox.call_args_list],
         )
 
     def test_focus_view_opens_the_exact_task_in_tasks(self):

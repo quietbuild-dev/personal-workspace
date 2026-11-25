@@ -1,2 +1,3 @@
 streamlit>=1.46,<2
 plotly>=5.24,<7
+ortools>=9.12,<10

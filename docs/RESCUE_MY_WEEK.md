@@ -1,5 +1,8 @@
 # Rescue My Week - Technical milestone (17 November 2026)
 
+This document records the original greedy milestone. For the current goal-based
+engine, see [GOAL_BASED_OPTIMIZER.md](GOAL_BASED_OPTIMIZER.md).
+
 ## The problem addressed
 
 The application stores unfinished assignments, deadlines, accepted study blocks,

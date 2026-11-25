@@ -553,6 +553,30 @@ def _edit_task(overview, categories, deadline_times) -> None:
     checklist = [step for step in steps if step.kind == "checklist"]
     with st.container(border=True):
         st.subheader(task.title)
+        from workspace.advanced_repository import set_task_dependencies
+
+        others = {t.id: t.title for t in overview.tasks if t.id != task.id}
+        parents = [
+            e.prerequisite_id for e in overview.advanced.dependencies if e.task_id == task.id
+        ]
+        with st.expander("Prerequisites", expanded=bool(parents)):
+            st.caption(
+                "Plan this task after its prerequisites. Unchecked prerequisite checklist "
+                "items block planning. Reserved study time does not count as completion."
+            )
+            with st.form(f"dependencies_{task.id}"):
+                selected_parents = st.multiselect(
+                    "Finish these tasks first",
+                    list(others),
+                    default=parents,
+                    format_func=lambda i: f"{others[i]} (#{i})",
+                    key=f"prerequisites_{task.id}",
+                )
+                if st.form_submit_button("Save prerequisites"):
+                    _apply(
+                        lambda: set_task_dependencies(DEFAULT_DB_PATH, task.id, selected_parents),
+                        "Prerequisites saved. Review your schedule for changes.",
+                    )
         if st.button("Close", key="close_task_details"):
             st.session_state["open_task_details"] = None
             st.rerun()
