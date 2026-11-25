@@ -46,7 +46,7 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
             reschedule_session_id=reschedule_id,
             dna=dna,
             compact=bool(dna and dna.distribution == "batch" and selected == "throughput"),
-            require_task_ids=must_ids,
+            require_task_ids=frozenset(),
         )
 
     result = cache[2].get(selected)
@@ -59,7 +59,12 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
         st.warning("Your calendar has changed. Preview again to see the latest plan.")
         return None, selected
     if result.message:
-        st.info(result.message)
+        if result.message == "Best plan found within the search limit.":
+            st.caption("Schedule ready to review.")
+            with st.expander("Solver details (optional)", expanded=False):
+                st.caption(result.message)
+        else:
+            st.info(result.message)
 
     with st.expander("Compare other goals (optional)", expanded=False):
         if st.button("Compare all goals", key="compare_goals"):
@@ -72,7 +77,7 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
                         reschedule_session_id=reschedule_id,
                         dna=dna,
                         compact=bool(dna and dna.distribution == "batch" and goal == "throughput"),
-                        require_task_ids=must_ids,
+                        require_task_ids=frozenset(),
                     )
         compared_goals = {k: v for k, v in cache[2].items() if k in GOALS}
         if len(compared_goals) > 1:
@@ -88,13 +93,27 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
                         "Goal": GOALS[goal],
                         "Due work allocated": f"{metrics['due_coverage_pct']:g}%",
                         "Priority work allocated": f"{metrics['high_priority_coverage_pct']:g}%",
+                        "Study days": len({slot.day for slot in alternative.revision.slots}),
+                        "Busiest day": f"{metrics['peak_day_minutes'] / 60:g}h",
                         "Existing blocks changed": metrics["moved_or_removed_sessions"],
                     }
                 )
+            plans = list(compared_goals.values())
+            same_slots = all(plan.revision.slots == plans[0].revision.slots for plan in plans[1:])
+            if same_slots:
+                st.caption(
+                    "These goals made the same timetable this week. "
+                    "Your available time and deadlines may leave little room for variation."
+                )
+            elif (
+                len({tuple(value for key, value in row.items() if key != "Goal") for row in rows})
+                == 1
+            ):
+                st.caption("The plans differ in timing, even if these totals match.")
             st.dataframe(rows, hide_index=True, width="stretch")
             st.caption(
-                "Percentages measure reserved study time, not completed assignments. "
-                "Choose a goal above to inspect its calendar."
+                "Percentages show time set aside, not assignments finished. "
+                "Select a goal above to inspect its calendar."
             )
         else:
             st.caption("Compare the alternative plans only if you want to explore trade-offs.")
@@ -102,9 +121,8 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
     # Unlike objective comparisons, this screen never labels a shortfall a complete plan.
     with st.expander("Plan A vs Plan B · Same deadlines, different rhythms", expanded=False):
         st.caption(
-            "Plan A spreads study time more evenly. Plan B groups study into fewer days "
-            "around fixed commitments. Both must cover every required study estimate "
-            "due this week before we offer them as alternatives."
+            "Both plans aim to fit all required deadline work. "
+            "Plan A spreads study out; Plan B tries to keep some days lighter."
         )
         if st.button("Build both plans", key="build_ab_plans"):
             cache[2]["ab_steady"] = optimize(
@@ -143,8 +161,9 @@ def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=froz
                 if not coverage.complete:
                     usable = False
                     st.warning(
-                        f"{label}: {coverage.outstanding_minutes} required minutes remain "
-                        "without a slot. We can't present this as a deadline-complete plan."
+                        f"{label}: {coverage.outstanding_minutes // 60}h "
+                        f"{coverage.outstanding_minutes % 60}m of deadline work "
+                        "still needs time. This plan isn't complete yet."
                     )
                 rows.append(
                     {

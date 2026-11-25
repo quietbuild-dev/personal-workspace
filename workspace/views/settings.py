@@ -1,4 +1,4 @@
-"""One-time Study DNA onboarding and always-editable preferences."""
+"""Personal study preferences: local, editable, and used in scheduling."""
 
 import sqlite3
 from pathlib import Path
@@ -13,7 +13,7 @@ CONCENTRATION_OPTIONS = {
     "midday": "Late morning / midday (10 AM–2 PM)",
     "afternoon": "Afternoon (2–6 PM)",
     "evening": "Evening (6–11 PM)",
-    "varies": "It varies — no strong preference",
+    "varies": "No preferred time — fit study around my schedule",
 }
 SESSION_OPTIONS = {
     "short": "25–30 minutes — shorter sessions",
@@ -68,7 +68,7 @@ def render_form(db_path: Path, *, onboarding=False) -> bool:
             format_func=FLEXIBILITY_OPTIONS.get,
         )
         submit = st.form_submit_button(
-            "Save my Study DNA" if onboarding else "Save preferences", type="primary"
+            "Save my preferences" if onboarding else "Save preferences", type="primary"
         )
     if submit:
         try:
@@ -76,7 +76,7 @@ def render_form(db_path: Path, *, onboarding=False) -> bool:
         except (ValueError, OSError, sqlite3.Error) as exc:
             st.error(f"Couldn't save your preferences: {exc}")
             return False
-        st.success("Study DNA saved. Your next schedule preview will use your preferences.")
+        st.success("Preferences saved. Your next plan will use them.")
         return True
     return False
 
@@ -84,7 +84,7 @@ def render_form(db_path: Path, *, onboarding=False) -> bool:
 def main():
     st.title("Settings")
     st.caption("Your preferences are stored only in this installation's local database.")
-    st.subheader("Your Study DNA")
+    st.subheader("My Study Style")
     if render_form(DEFAULT_DB_PATH):
         st.session_state.pop("goal_previews", None)
     st.info(

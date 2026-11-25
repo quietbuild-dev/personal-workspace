@@ -25,7 +25,7 @@ PRIORITY = {
 EVENT_COLORS = {
     "study": ("#655875", "#DDC5F0", "#FBF7FF"),
     "lecture": ("#455A75", "#8FAACB", "#F4F8FF"),
-    "social": ("#65536E", "#B7A0C9", "#F9F4FC"),
+    "social": ("#744F65", "#D99EBB", "#FFF5F9"),
     "exercise": ("#3C5D55", "#8AB9A6", "#F1FFF8"),
     "personal": ("#66564E", "#C8A99D", "#FFF7F4"),
     "appointment": ("#4A5667", "#98A6BD", "#F2F4FA"),
@@ -58,6 +58,38 @@ html, body, .stApp, [data-testid="stAppViewContainer"],
 [data-testid="stTopNav"] a:hover, [data-testid="stTopNav"] button:hover {
     color:#F1EEF5!important;
 }
+/* Keep Settings apart from core pages in the native top navigation.
+   CSS only: no replacement of Streamlit's routing or keyboard navigation. */
+[data-testid="stTopNav"] li:has(a[href*="settings"]),
+[data-testid="stTopNav"] [role="listitem"]:has(a[href*="settings"]) {
+    margin-left:auto!important;
+}
+
+/* Align Settings and the following Advanced dropdown to the header's right.
+   Streamlit top navigation uses rc-overflow-item divs, not li elements. */
+@media (min-width: 960px) {
+    .stAppHeader [data-testid="stTopNav"],
+    .stAppHeader nav:has(.rc-overflow) {
+        flex: 1 1 auto !important;
+        width: 100% !important;
+        max-width: none !important;
+        min-width: 0 !important;
+    }
+    .stAppHeader .rc-overflow {
+        width: 100% !important;
+        flex: 1 1 auto !important;
+        display: flex !important;
+        min-width: 0 !important;
+    }
+    .stAppHeader .rc-overflow > .rc-overflow-item:has(a[href*="settings"]),
+    .stAppHeader [data-testid="stTopNav"] .rc-overflow > .rc-overflow-item:has(a[href*="settings"]),
+    .stAppHeader .rc-overflow > [role="listitem"]:has(a[href*="settings"]),
+    /* Fallback for Streamlit builds that wrap navigation labels differently. */
+    .stAppHeader .rc-overflow > .rc-overflow-item:nth-child(4) {
+        margin-left: auto !important;
+    }
+}
+
 [data-testid="stVerticalBlockBorderWrapper"] {
     border-color:#393640!important;border-radius:17px!important;
     background:#22222B!important;
@@ -173,15 +205,53 @@ hr {border-color:#393640!important;}
     overflow:hidden;margin-top:10px;}
 .pw-progress > span {display:block;height:100%;border-radius:10px;
     background:#BAA9D0;}
+/* Logged work is green; it is not the same as reserved calendar time. */
+.pw-task-completion {height:8px;border-radius:50px;background:#353842;
+    overflow:hidden;margin-top:10px;}
+.pw-task-completion > span {display:block;height:100%;border-radius:50px;
+    background:linear-gradient(90deg,#55AA80,#89D7A7);}
+.pw-task-completion-caption {color:#A8C9B6;font-size:.73rem;
+    margin-top:5px;letter-spacing:.01em;}
+/* Hide Streamlit's non-interactive heading anchor links in the desktop UI. */
+[data-testid="stHeaderActionElements"] {display:none!important;}
+
+/* Compact category label: appears on hover, disappears on mouseout.
+   Keyboard users can also see it when focusing a segment. */
+.pw-workbar-track {position:relative;overflow:visible!important;}
+.pw-workbar-track:has(.pw-workbar-segment:hover),
+.pw-workbar-track:has(.pw-workbar-segment:focus-visible) {z-index:30;}
+.pw-workbar-segment {position:relative;cursor:help;}
+.pw-workbar-segment:first-child {border-radius:0 0 7px 7px;}
+.pw-workbar-segment:hover,.pw-workbar-segment:focus-visible {
+    z-index:35;filter:brightness(1.08);
+}
+.pw-workbar-segment:focus-visible {outline:2px solid #F1EEF5;outline-offset:1px;}
+.pw-workbar-tooltip {
+    display:none;position:absolute;z-index:40;left:50%;bottom:calc(100% + 5px);
+    transform:translateX(-50%);padding:4px 7px;border-radius:7px;
+    background:#373140;color:#F1EEF5;border:1px solid #514A60;
+    box-shadow:0 5px 12px rgba(0,0,0,.24);font-size:.70rem;
+    line-height:1.2;white-space:nowrap;pointer-events:none;
+}
+.pw-workbar-segment:hover > .pw-workbar-tooltip,
+.pw-workbar-segment:focus-visible > .pw-workbar-tooltip {display:block;}
+.pw-workday:first-child .pw-workbar-tooltip {left:0;transform:none;}
+.pw-workday:last-child .pw-workbar-tooltip {left:auto;right:0;transform:none;}
+
 .pw-workload {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:9px;
     align-items:end;margin-top:19px;}
 .pw-workday {min-width:0;text-align:center;}
-.pw-workbar-track {height:66px;background:#2C2A36;border-radius:7px;
+.pw-workbar-track {height:92px;max-width:76px;margin-left:auto;margin-right:auto;
+    background:#2C2A36;border-radius:9px;
     display:flex;align-items:flex-end;overflow:hidden;margin-bottom:8px;}
+.pw-workbar-track {flex-direction:column;align-items:stretch;justify-content:flex-end;}
+.pw-workbar-segment {width:100%;flex:none;min-height:1px;}
+.pw-workbar-segment:last-child {border-radius:7px 7px 0 0;}
 .pw-workbar-fill {width:100%;border-radius:6px 6px 0 0;
     background:linear-gradient(180deg,#BAA9D0,#847296);}
 .pw-workday-label {font-size:.7rem;font-weight:650;color:#A8A4B3;}
-.pw-workday-value {font-size:.66rem;color:#A8A4B3;margin-top:4px;}
+.pw-workday-value {font-size:.72rem;color:#A8A4B3;margin-top:6px;
+    white-space:normal;line-height:1.25;}
 .pw-insight {padding:16px 19px;background:#26232F;
     border:1px solid #51485F;border-left:3px solid #BAA9D0;
     border-radius:13px;margin:10px 0 13px;}
@@ -237,7 +307,7 @@ CALENDAR_CSS = """
 .wp-scroll .wp-calendar .wp-social,
 .wp-scroll .wp-calendar a.wp-social:link,
 .wp-scroll .wp-calendar a.wp-social:visited {
-    background:#65536E!important;border-color:#B7A0C9!important;color:#F9F4FC!important;}
+    background:#744F65!important;border-color:#D99EBB!important;color:#FFF5F9!important;}
 .wp-scroll .wp-calendar .wp-exercise,
 .wp-scroll .wp-calendar a.wp-exercise:link {
     background:#3C5D55!important;border-color:#8AB9A6!important;color:#F1FFF8!important;}
@@ -282,8 +352,8 @@ COMPARISON_CSS = """
 .cmp-same {opacity:.52!important;}
 .cmp-lecture {background:#455A75!important;color:#F4F8FF!important;
     border-color:#8FAACB!important;}
-.cmp-social {background:#65536E!important;color:#F9F4FC!important;
-    border-color:#B7A0C9!important;}
+.cmp-social {background:#744F65!important;color:#FFF5F9!important;
+    border-color:#D99EBB!important;}
 .cmp-exercise {background:#3C5D55!important;color:#F1FFF8!important;
     border-color:#8AB9A6!important;}
 .cmp-personal {background:#66564E!important;color:#FFF7F4!important;

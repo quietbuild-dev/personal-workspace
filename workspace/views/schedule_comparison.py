@@ -134,7 +134,7 @@ def before_after_html(day, events, previous, proposed, steps) -> str:
     .cmp-new{background:#668b70;color:#fff;border-left:3px solid #c2e6c9}
     .cmp-same{opacity:.55}
     .cmp-lecture{background:#425e76;color:#eef6ff;border-color:#95bbdf}
-    .cmp-social{background:#665573;color:#f7eefe;border-color:#bda4ce}
+    .cmp-social{background:#744F65;color:#fff5f9;border-color:#D99EBB}
     .cmp-exercise{background:#48695d;color:#edfff2;border-color:#90cbb2}
     .cmp-appointment,.cmp-other,.cmp-personal{background:#5d5b58;color:#fff;border-color:#a6a19a}
     @media(max-width:560px){.cmp-layout{gap:5px}.cmp-event{font-size:9px;padding:2px}
