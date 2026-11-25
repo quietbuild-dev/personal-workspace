@@ -20,8 +20,8 @@ from workspace.advanced_repository import (
     undo_last_plan,
     update_fixed_event,
 )
-from workspace.conflict_analysis import analyze_conflicts
 from workspace.calendar_export import build_calendar_ics
+from workspace.conflict_analysis import analyze_conflicts
 from workspace.manual_planning import move_proposed_block
 from workspace.planning_insights import (
     assess_proposal,

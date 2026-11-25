@@ -1,6 +1,6 @@
 """The optimizer's third objective should prefer nearby, usable blocks on ties."""
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from workspace.advanced_planner import PlannerSnapshot, SavedSession, Slot, StudyStep
 from workspace.optimizer import _score, proposal_from_slots
