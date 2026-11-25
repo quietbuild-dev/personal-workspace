@@ -643,6 +643,22 @@ def undo_last_plan(db_path: Path, now: datetime | None = None) -> int:
             raise
 
 
+def plan_undo_status(db_path: Path) -> str:
+    """Return 'ready', 'changed', or 'none' for a previously accepted plan.
+
+    An intervening task, event, preference or session edit makes Undo unsafe.
+    The UI can now explain a disabled action instead of silently hiding it.
+    """
+    initialize_advanced(db_path)
+    with closing(_connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT expected_fingerprint FROM last_plan_undo WHERE singleton=1"
+        ).fetchone()
+        if row is None:
+            return "none"
+        return "ready" if _fetch_snapshot(conn).fingerprint == row[0] else "changed"
+
+
 def has_undo_plan(db_path: Path) -> bool:
     """Show Undo only while the immediately previous plan can be restored."""
     initialize_advanced(db_path)

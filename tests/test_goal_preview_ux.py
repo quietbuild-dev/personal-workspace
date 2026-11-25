@@ -29,7 +29,7 @@ def test_goal_switch_refreshes_preview_without_writing_data():
             module,
             "optimize",
             side_effect=lambda *_args, goal, **_kwargs: SimpleNamespace(
-                goal=goal, revision=object(), message=""
+                goal=goal, revision=SimpleNamespace(slots=()), message=""
             ),
         ) as optimizer,
         patch.object(module, "validate_revision"),
@@ -40,6 +40,7 @@ def test_goal_switch_refreshes_preview_without_writing_data():
                 "due_coverage_pct": 80,
                 "high_priority_coverage_pct": 90,
                 "moved_or_removed_sessions": 2,
+                "peak_day_minutes": 0,
             },
         ),
     ):

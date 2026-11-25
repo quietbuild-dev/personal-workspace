@@ -239,7 +239,7 @@ def calendar_html(
     .wp-study {background:#9eb5a1; color:#19231c; border-color:#c6d5c9;}
     .wp-fixed {background:#4c5e68; color:#f1f5f6; border-color:#94a7b0;}
     .wp-lecture {background:#50637a; color:#f6f8fb; border-color:#91b0d1;}
-    .wp-social {background:#655671; color:#f9f3fc; border-color:#a99abb;}
+    .wp-social {background:#744F65; color:#fff5f9; border-color:#D99EBB;}
     .wp-exercise {background:#465e58; color:#e3f9ed; border-color:#7db49a;}
     .wp-personal {background:#6b5d53; color:#fff6eb; border-color:#bd9f7e;}
     .wp-appointment {background:#4c5e68; color:#f1f5f6; border-color:#94a7b0;}
@@ -253,7 +253,7 @@ def calendar_html(
     .wp-scroll .wp-calendar .wp-lecture,.wp-scroll .wp-calendar a.wp-lecture:link,
     .wp-scroll .wp-calendar a.wp-lecture:visited {color:#f6f8fb!important;}
     .wp-scroll .wp-calendar .wp-social,.wp-scroll .wp-calendar a.wp-social:link,
-    .wp-scroll .wp-calendar a.wp-social:visited {color:#f9f3fc!important;}
+    .wp-scroll .wp-calendar a.wp-social:visited {color:#fff5f9!important;}
     .wp-scroll .wp-calendar .wp-block-title,.wp-scroll .wp-calendar .wp-block-clock {
         color:inherit!important;text-decoration:none!important;}
     .wp-block-title {font-weight:650; display:-webkit-box; -webkit-line-clamp:2;
@@ -456,7 +456,7 @@ def render_weekly_calendar(db_path: Path) -> None:
             st.caption(issue)
 
     calendar_tab, setup_tab, review_tab = st.tabs(
-        ["Accepted calendar", "Time windows & commitments", "Propose / review revision"]
+        ["Accepted calendar", "Time windows & commitments", "Preview a new plan"]
     )
 
     with calendar_tab:
@@ -540,7 +540,7 @@ def render_weekly_calendar(db_path: Path) -> None:
                                     lambda: (
                                         record_session(db_path, session.id, "missed"),
                                         "Session marked missed. "
-                                        "Generate a revision to place unfinished work.",
+                                        "Preview a plan for unfinished work.",
                                     )[1]
                                 )
         else:
@@ -636,7 +636,7 @@ def render_weekly_calendar(db_path: Path) -> None:
                 "Add timed steps beneath an open task in Tasks & Projects to generate a timetable."
             )
         existing = st.session_state.get("calendar_proposal")
-        if st.button("Generate proposed revision", type="primary", disabled=not timed):
+        if st.button("Preview a new plan", type="primary", disabled=not timed):
             proposal_now = datetime.now()
             proposal = make_revision(snapshot, proposal_now, preserve_existing=True)
             baseline = make_revision(snapshot, proposal_now, preserve_existing=False)

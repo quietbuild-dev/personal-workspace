@@ -303,6 +303,50 @@ def toggle_quick_task(db_path: Path, task_id: int, completed: bool) -> None:
             raise
 
 
+def restore_just_completed_task(db_path: Path, task_id: int, previous_remaining: int) -> None:
+    """Reopen an immediately completed task with its previous work estimate.
+
+    The quick-linked timed step is restored in the same transaction; ordinary
+    Reopen deliberately resets to full estimated time, but this action does not.
+    """
+    _validate_task_id(task_id)
+    if type(previous_remaining) is not int or previous_remaining <= 0:
+        raise ValueError("There is no earlier work estimate to restore.")
+    initialize_quick_tasks(db_path)
+    with closing(_connect(db_path)) as conn:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status,estimate_minutes FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if row is None or row["status"] != "completed":
+                raise ValueError("This task changed. Reopen it from the task list instead.")
+            if previous_remaining > row["estimate_minutes"]:
+                raise ValueError("The estimate changed. Reopen this task manually.")
+            link = conn.execute(
+                "SELECT step_id FROM quick_task_links WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if link:
+                step = conn.execute(
+                    "SELECT estimate_minutes FROM study_steps WHERE id=?", (link["step_id"],)
+                ).fetchone()
+                if step is None or previous_remaining > step["estimate_minutes"]:
+                    raise ValueError("This task's study steps changed. Reopen it manually.")
+                conn.execute(
+                    "UPDATE study_steps SET remaining_minutes=? WHERE id=?",
+                    (previous_remaining, link["step_id"]),
+                )
+            conn.execute(
+                "UPDATE tasks SET remaining_minutes=?,status='pending',completed_at=NULL "
+                "WHERE id=?",
+                (previous_remaining, task_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def add_detailed_timed_step(db_path: Path, task_id: int, title: str, minutes: int) -> int:
     """Split an auto focus block into two parts instead of double-counting work.
 

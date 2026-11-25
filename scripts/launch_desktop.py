@@ -110,7 +110,6 @@ def _set_native_window_icon(icon_path: Path) -> None:
         _record_icon_note(f"Could not apply taskbar icon: {error}")
 
 
-
 def _open_embedded_window(url: str) -> None:
     """Display Streamlit without launching Edge or sharing its extensions/profile."""
     try:

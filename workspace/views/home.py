@@ -12,7 +12,6 @@ from workspace.advanced_repository import (
     StaleProposalError,
     accept_revision,
     add_step,
-    list_task_categories,
     list_task_due_times,
     set_checklist_done,
 )
@@ -27,6 +26,7 @@ from workspace.quick_tasks import (
     edit_quick_task,
     enable_quick_planning,
     initialize_quick_tasks,
+    restore_just_completed_task,
     toggle_quick_task,
 )
 from workspace.repository import DEFAULT_DB_PATH, delete_task
@@ -38,8 +38,16 @@ from workspace.study_dna import (
     task_is_required,
 )
 from workspace.subtask_input import parse_subtasks
+from workspace.task_progress import (
+    MODE_LABELS,
+    ProgressPreference,
+    load_progress_preferences,
+    progress_html,
+    save_progress_preference,
+)
 from workspace.theme import insight_card, priority_badge, stat_card
 from workspace.views.settings import render_form
+from workspace.workload_summary import COLORS, ORDER, workload_breakdown
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -357,33 +365,49 @@ def _personalized_nudge(overview, today: date, profile) -> str | None:
 
 
 def _weekly_workload(overview, today: date) -> str:
-    """Read-only overview of accepted sessions, not hypothetical proposals."""
-    monday, _ = week_bounds(today)
-    minutes_by_day = {}
-    for session in overview.advanced.sessions:
-        if session.status == "planned":
-            minutes_by_day[session.day] = (
-                minutes_by_day.get(session.day, 0) + session.end - session.start
-            )
-    days = [monday + timedelta(days=i) for i in range(7)]
-    peak = max(120, *(minutes_by_day.get(day, 0) for day in days))
+    """Color-coded stacked week: accepted study and fixed calendar obligations."""
+    rows = workload_breakdown(overview.advanced, today)
+    peak = max(120, *(sum(parts.values()) for parts in rows.values()))
     bars = []
-    for day in days:
-        minutes = minutes_by_day.get(day, 0)
-        percentage = round(100 * minutes / peak)
-        label = f"{minutes / 60:g}h" if minutes else "—"
+    for day, parts in rows.items():
+        study = parts["Study"]
+        commitments = sum(minutes for kind, minutes in parts.items() if kind != "Study")
+        booked = study + commitments
+        segments = []
+        for kind in ORDER:
+            minutes = parts[kind]
+            if minutes:
+                height = round(100 * minutes / peak, 2)
+                segments.append(
+                    '<div class="pw-workbar-segment" tabindex="0" '
+                    f'aria-label="{kind} {pretty_duration(minutes)}" '
+                    f'style="height:{height}%;background:{COLORS[kind]}">'
+                    f'<span class="pw-workbar-tooltip" aria-hidden="true">'
+                    f'{kind} {pretty_duration(minutes)}</span>'
+                    "</div>"
+                )
+        # Only literal color constants and integer-derived dimensions enter HTML.
         bars.append(
             '<div class="pw-workday">'
-            '<div class="pw-workbar-track">'
-            f'<div class="pw-workbar-fill" style="height:{percentage}%"></div>'
-            "</div>"
-            f'<div class="pw-workday-label">{day:%a}</div>'
-            f'<div class="pw-workday-value">{label}</div></div>'
+            f'<div class="pw-workbar-track" role="group" aria-label="{day:%A}: '
+            f'{study / 60:g} study hours and {commitments / 60:g} other hours">'
+            + "".join(segments)
+            + "</div>"
+            + f'<div class="pw-workday-label">{day:%a}</div>'
+            + '<div class="pw-workday-value">'
+            + (f"{booked / 60:g}h" if booked else "—")
+            + "</div></div>"
         )
+    legend = "".join(
+        '<span><i style="background:' + COLORS[kind] + '"></i>' + kind + "</span>" for kind in ORDER
+    )
     return (
-        '<div class="pw-card"><h3>Weekly workload</h3>'
-        '<p class="pw-section-note">Study sessions already in your calendar</p>'
-        '<div class="pw-workload">' + "".join(bars) + "</div></div>"
+        '<div class="pw-card"><h3>Your week at a glance</h3>'
+        '<p class="pw-section-note">Booked hours by category</p>'
+        '<div class="pw-legend">' + legend + "</div>"
+        '<div class="pw-workload">' + "".join(bars) + "</div>"
+        '<p class="pw-section-note">Booked hours, not free time. '
+        "Overlapping events may add up.</p></div>"
     )
 
 
@@ -405,10 +429,14 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
         for task in pending
         if task.deadline is not None and today <= task.deadline <= today + timedelta(days=7)
     ]
+    progress_preferences = load_progress_preferences(DEFAULT_DB_PATH)
     checklist_by_task = {}
+    timed_by_task = {}
     for step in overview.advanced.steps:
         if step.kind == "checklist":
             checklist_by_task.setdefault(step.task_id, []).append(step)
+        elif step.kind == "timed":
+            timed_by_task.setdefault(step.task_id, []).append(step)
 
     left, right = st.columns([1.18, 0.82], gap="large")
     with left:
@@ -431,18 +459,15 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
                         f"{pretty_duration(task.remaining_minutes)} remaining</div>",
                         unsafe_allow_html=True,
                     )
-                    checklist = checklist_by_task.get(task.id, [])
-                    if checklist:
-                        done = sum(item.checked for item in checklist)
-                        percentage = round(100 * done / len(checklist))
-                        st.markdown(
-                            '<div class="pw-progress" '
-                            f'aria-label="{done} of {len(checklist)} steps complete">'
-                            f'<span style="width:{percentage}%"></span></div>'
-                            '<div class="pw-task-meta">'
-                            f"{done} of {len(checklist)} steps complete</div>",
-                            unsafe_allow_html=True,
-                        )
+                    st.markdown(
+                        progress_html(
+                            task,
+                            checklist_by_task.get(task.id, []),
+                            timed_by_task.get(task.id, []),
+                            progress_preferences.get(task.id),
+                        ),
+                        unsafe_allow_html=True,
+                    )
                 with action:
                     if st.button("View task", key=f"focus_view_{task.id}", width="stretch"):
                         _view_task(task.id)
@@ -455,13 +480,12 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
                     st.markdown(f"✓ {escape(task.title)}")
             else:
                 st.caption("Completed tasks will appear here as you finish them.")
-        st.page_link("workspace/views/task_board.py", label="View all tasks")
     with right:
         due = [
             '<div class="pw-card"><h3>Upcoming deadlines</h3>',
             '<p class="pw-section-note">The next seven days</p>',
         ]
-        for task in soon[:4]:
+        for task in soon[:3]:
             due.extend(
                 [
                     '<div class="pw-task-preview"><div class="pw-task-head">',
@@ -469,14 +493,21 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
                     priority_badge(task.priority),
                     '</div><div class="pw-task-meta">',
                     escape(due_display(task, deadline_times, today)),
-                    "</div></div>",
+                    "</div>",
+                    progress_html(
+                        task,
+                        checklist_by_task.get(task.id, []),
+                        timed_by_task.get(task.id, []),
+                    ),
+                    "</div>",
                 ]
             )
         if not soon:
             due.append('<p class="pw-section-note">No deadlines in the next seven days.</p>')
         due.append("</div>")
+        if len(soon) > 3:
+            due.append(f'<p class="pw-section-note">And {len(soon) - 3} more in Tasks.</p>')
         st.markdown("".join(due), unsafe_allow_html=True)
-        st.markdown(_weekly_workload(overview, today), unsafe_allow_html=True)
 
 
 def _task_rows(
@@ -487,6 +518,22 @@ def _task_rows(
     selected_task_id: int | None = None,
 ) -> None:
     st.subheader("Your tasks")
+    progress_preferences = load_progress_preferences(DEFAULT_DB_PATH)
+    just_done = st.session_state.get("just_completed_task")
+    if just_done:
+        task_id, title, previous_remaining = just_done
+        current = next((t for t in overview.tasks if t.id == task_id), None)
+        if current is not None and current.status == "completed":
+            st.success(f"{title} completed.")
+            if st.button("Undo completion", key="undo_task_completion"):
+
+                def restore():
+                    restore_just_completed_task(DEFAULT_DB_PATH, task_id, previous_remaining)
+                    st.session_state.pop("just_completed_task", None)
+
+                _apply(restore, "Task reopened.")
+        else:
+            st.session_state.pop("just_completed_task", None)
     all_tasks = list(overview.tasks)
     if selected_task_id is not None:
         displayed = [task for task in all_tasks if task.id == selected_task_id]
@@ -518,21 +565,40 @@ def _task_rows(
                     f"{task.category} · {due_display(task, deadline_times, date.today())}"
                     f" · {pretty_duration(actually_left)} left"
                 )
+                checklist_for_task = [
+                    step
+                    for step in overview.advanced.steps
+                    if step.task_id == task.id and step.kind == "checklist"
+                ]
+                st.markdown(
+                    progress_html(
+                        task, checklist_for_task, timed, progress_preferences.get(task.id)
+                    ),
+                    unsafe_allow_html=True,
+                )
             with action:
                 if st.button(
                     "Done" if task.status == "pending" else "Reopen",
                     key=f"done_{task.id}",
                     width="stretch",
                 ):
-                    _apply(
-                        lambda t=task: toggle_quick_task(
-                            DEFAULT_DB_PATH, t.id, t.status == "pending"
-                        ),
-                        "Task progress updated.",
-                    )
+
+                    def set_completed(t=task):
+                        marking_done = t.status == "pending"
+                        toggle_quick_task(DEFAULT_DB_PATH, t.id, marking_done)
+                        if marking_done:
+                            st.session_state["just_completed_task"] = (
+                                t.id,
+                                t.title,
+                                t.remaining_minutes,
+                            )
+                        else:
+                            st.session_state.pop("just_completed_task", None)
+
+                    _apply(set_completed, "Task updated.")
             with partial:
                 if task.status == "pending" and st.button(
-                    "Partly",
+                    "Progress",
                     key=f"partial_{task.id}",
                     width="stretch",
                 ):
@@ -546,6 +612,40 @@ def _task_rows(
                     st.session_state["open_task_details"] = None if current == task.id else task.id
                     st.rerun()
             if st.session_state.get("partial_task_id") == task.id:
+                pref = progress_preferences.get(task.id, ProgressPreference())
+                st.markdown("**How should progress be measured?**")
+                choices = ["auto", "time", "manual"]
+                if checklist_for_task:
+                    choices.insert(1, "checklist")
+                mode = st.selectbox(
+                    "Track using",
+                    choices,
+                    index=choices.index(pref.mode) if pref.mode in choices else 0,
+                    format_func=MODE_LABELS.get,
+                    key=f"progress_mode_{task.id}",
+                )
+                with st.form(f"progress_method_{task.id}"):
+                    percent = pref.manual_percent
+                    if mode == "manual":
+                        percent = st.slider(
+                            "How far along are you?",
+                            0,
+                            100,
+                            percent,
+                            5,
+                            help=(
+                                "This changes the progress bar, not the study estimate. "
+                                "Mark Done to finish the task."
+                            ),
+                            key=f"progress_percent_{task.id}",
+                        )
+                    if st.form_submit_button("Save progress preference"):
+                        _apply(
+                            lambda: save_progress_preference(
+                                DEFAULT_DB_PATH, task.id, mode, int(percent)
+                            ),
+                            "Progress display updated.",
+                        )
                 checklist = [
                     step
                     for step in overview.advanced.steps
@@ -579,29 +679,30 @@ def _task_rows(
                             ),
                             "Task completed.",
                         )
-                with st.form(f"partial_work_{task.id}"):
-                    st.caption("How much of this task is still unfinished?")
-                    remaining = _duration_input(
-                        f"partial_work_{task.id}", minutes=task.remaining_minutes
-                    )
-                    if st.form_submit_button("Update remaining work", type="primary"):
+                with st.expander("Update remaining study time (optional)"):
+                    with st.form(f"partial_work_{task.id}"):
+                        st.caption("How much of this task is still unfinished?")
+                        remaining = _duration_input(
+                            f"partial_work_{task.id}", minutes=task.remaining_minutes
+                        )
+                        if st.form_submit_button("Update remaining work", type="primary"):
 
-                        def save_partial():
-                            edit_quick_task(
-                                DEFAULT_DB_PATH,
-                                task.id,
-                                TaskDraft(
-                                    task.title,
-                                    task.category,
-                                    task.deadline,
-                                    task.priority,
-                                    task.estimate_minutes,
-                                ),
-                                remaining,
-                            )
-                            st.session_state.pop("partial_task_id", None)
+                            def save_partial():
+                                edit_quick_task(
+                                    DEFAULT_DB_PATH,
+                                    task.id,
+                                    TaskDraft(
+                                        task.title,
+                                        task.category,
+                                        task.deadline,
+                                        task.priority,
+                                        task.estimate_minutes,
+                                    ),
+                                    remaining,
+                                )
+                                st.session_state.pop("partial_task_id", None)
 
-                        _apply(save_partial, "Progress saved. Your schedule may need review.")
+                            _apply(save_partial, "Progress saved. Your schedule may need review.")
             if st.session_state.get("open_task_details") == task.id:
                 _edit_task(overview, categories, deadline_times)
 
@@ -767,6 +868,65 @@ def _edit_task(overview, categories, deadline_times) -> None:
                 _apply(delete, "Task deleted.")
 
 
+def _home_planning_insight(overview, now: datetime, required_ids: frozenset[int]) -> None:
+    """One visible, data-driven summary; no duplicated radar or hidden warning."""
+    snapshot = overview.advanced
+    if not (snapshot.budgets or snapshot.windows):
+        st.markdown(
+            insight_card(
+                "Plan your study time",
+                "Set study hours in Calendar to get a realistic scheduling suggestion.",
+            ),
+            unsafe_allow_html=True,
+        )
+        return
+
+    comparison = compare_plans(snapshot, now)
+    coverage = check_required_coverage(snapshot, comparison.preserve.revision, now, required_ids)
+    if coverage.outstanding_minutes:
+        count = len(coverage.tasks_short)
+        title = f"{count} deadline{'s' if count != 1 else ''} need attention"
+        names = ", ".join(coverage.tasks_short[:3])
+        if count > 3:
+            names += f" and {count - 3} more"
+        message = (
+            f"{pretty_duration(coverage.outstanding_minutes)} of required work still needs "
+            f"a study slot before its deadline. Affected: {names}."
+        )
+        st.markdown(insight_card(title, message), unsafe_allow_html=True)
+        st.page_link("workspace/views/week.py", label="Review planning options")
+        return
+
+    significant = [
+        risk
+        for risk in comparison.preserve.risks
+        if risk.reason == "overdue" or risk.unscheduled_minutes >= 60
+    ]
+    if significant:
+        first = significant[0]
+        st.markdown(
+            insight_card(
+                "A deadline needs attention",
+                f"{first.title} may need a scheduling adjustment. Review the available options.",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.page_link("workspace/views/week.py", label="Review planning options")
+    elif comparison.preserve.changed:
+        st.markdown(
+            insight_card(
+                "An updated plan is available",
+                "You can preview a new arrangement without changing the saved calendar.",
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            insight_card("Your study plan is on track", "No significant changes needed."),
+            unsafe_allow_html=True,
+        )
+
+
 def main() -> None:
     now = datetime.now()
     greeting = (
@@ -775,7 +935,6 @@ def main() -> None:
     try:
         initialize_quick_tasks(DEFAULT_DB_PATH)
         overview = load_overview(DEFAULT_DB_PATH, now.date())
-        categories = list_task_categories(DEFAULT_DB_PATH)
         due_times = list_task_due_times(DEFAULT_DB_PATH)
         profile = load_study_dna(DEFAULT_DB_PATH)
         required_ids = required_task_ids(DEFAULT_DB_PATH, overview.tasks)
@@ -800,19 +959,6 @@ def main() -> None:
             if st.button("Maybe later — show my dashboard", key="study_dna_skip"):
                 st.session_state["study_dna_later"] = True
                 st.rerun()
-    if profile is not None:
-        labels = {
-            "early": "early morning",
-            "midday": "late morning",
-            "afternoon": "afternoon",
-            "evening": "evening",
-            "varies": "flexible hours",
-        }
-        st.caption(
-            f"Study DNA: strongest focus in {labels[profile.concentration]}. "
-            "It's a preference, not a restriction. "
-        )
-        st.page_link("workspace/views/settings.py", label="Edit Study DNA")
     message = st.session_state.pop("home_message", None)
     if message:
         st.success(message)
@@ -845,67 +991,14 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    # The most actionable planning information belongs above the two-column overview.
+    _home_planning_insight(overview, now, required_ids)
     nudge = _personalized_nudge(overview, now.date(), profile)
     if nudge:
         st.caption(nudge)
     _home_priorities(overview, due_times, now.date())
-    newly_added = st.session_state.get("newly_added_task")
-    _suggestion(overview, now, newly_added)
-
-    insight_title = "Your study plan"
-    insight_description = "Review your saved study sessions or adjust your preferences."
-    if not newly_added and (overview.advanced.budgets or overview.advanced.windows):
-        insight = compare_plans(overview.advanced, now)
-        significant = [
-            risk
-            for risk in insight.preserve.risks
-            if risk.reason == "overdue" or risk.unscheduled_minutes >= 60
-        ]
-        if significant:
-            insight_title = "One deadline needs attention"
-            insight_description = (
-                f"{significant[0].title} may need a scheduling adjustment. "
-                "Compare your options before changing anything."
-            )
-        elif insight.preserve.changed:
-            insight_title = "An updated plan is available"
-            insight_description = (
-                "You can review a new arrangement without changing the saved calendar."
-            )
-        else:
-            insight_title = "Your saved plan is looking steady"
-            insight_description = "No significant schedule changes are currently suggested."
-    st.markdown("<h3>Planning insight</h3>", unsafe_allow_html=True)
-    st.markdown(insight_card(insight_title, insight_description), unsafe_allow_html=True)
-    if overview.advanced.steps:
-        candidate = compare_plans(overview.advanced, now).preserve.revision
-        coverage = check_required_coverage(overview.advanced, candidate, now, required_ids)
-        if coverage.outstanding_minutes:
-            st.warning(
-                f"Deadline radar · {pretty_duration(coverage.outstanding_minutes)} of "
-                "required study time due this week has no proposed slot yet."
-            )
-            with st.expander("Which deadlines need attention?"):
-                for task_name in coverage.tasks_short[:8]:
-                    st.write(task_name)
-                st.caption("Based on the current quick preview, not proof of infeasibility.")
-        elif coverage.required_minutes:
-            st.caption(
-                "Deadline radar · Current preview allocates study time for all "
-                "required timed work due this week. Work still needs to be completed."
-            )
-    if st.button("Plan my week", key="home_plan_week", type="primary"):
-        st.session_state["start_week_plan"] = True
-        st.switch_page("workspace/views/week.py")
-    st.page_link("workspace/views/week.py", label="Open calendar")
-
-    with st.expander("Today's schedule", expanded=False):
-        _today(overview, now)
-    with st.expander("Add a task", expanded=False):
-        _new_task(categories)
-    with st.expander("Manage tasks", expanded=False):
-        _task_rows(overview, due_times, categories)
-    st.caption("For a full task view, use Tasks in the top navigation.")
+    # Full-width chart avoids a long right-hand column and unused left-hand space.
+    st.markdown(_weekly_workload(overview, now.date()), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

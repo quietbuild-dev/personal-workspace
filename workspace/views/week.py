@@ -13,8 +13,8 @@ from workspace.advanced_repository import (
     accept_revision,
     add_fixed_event,
     delete_fixed_event,
-    has_undo_plan,
     load_snapshot,
+    plan_undo_status,
     record_session,
     save_week_preferences,
     undo_last_plan,
@@ -24,6 +24,7 @@ from workspace.calendar_export import build_calendar_ics
 from workspace.conflict_analysis import analyze_conflicts
 from workspace.deadline_guarantees import check_required_coverage
 from workspace.manual_planning import move_proposed_block
+from workspace.optimizer import GOALS
 from workspace.planning_insights import (
     assess_proposal,
     compare_plans,
@@ -390,8 +391,8 @@ def _review(snapshot, now: datetime) -> None:
         return
 
     with st.container(border=True):
-        st.markdown("### Rescue my week")
-        st.caption("Choose a goal and review the proposal. Nothing changes until you approve.")
+        st.markdown("### Rescue my week · Choose your plan")
+        st.caption("See how your week could look. Only approval saves the changes.")
         local_dna = load_study_dna(DEFAULT_DB_PATH)
         required = required_task_ids(DEFAULT_DB_PATH, list_tasks(DEFAULT_DB_PATH))
         result, selected = choose_goal_preview(
@@ -399,6 +400,11 @@ def _review(snapshot, now: datetime) -> None:
         )
         if result is None:
             return
+        plan_label = {
+            "ab_steady": "Plan A · Steady pace",
+            "ab_focus": "Plan B · Focus days",
+        }.get(selected, GOALS.get(selected, "Your schedule"))
+        st.markdown(f"**Previewing: {plan_label}** · Not saved yet")
         if st.session_state.get("calendar_adjusted_strategy") != selected:
             st.session_state.pop("calendar_adjusted_proposal", None)
         assessment = assess_proposal(snapshot, result.revision)
@@ -413,7 +419,7 @@ def _review(snapshot, now: datetime) -> None:
         changed_count = proposal.removed_or_changed + proposal.added_or_changed
         metrics = schedule_metrics(snapshot, proposal, now)
         a, b, c = st.columns(3, gap="small")
-        a.metric("Study time proposed", _duration(proposal.planned_minutes))
+        a.metric("Study time in this plan", _duration(proposal.planned_minutes))
         b.metric("Due this week covered", f"{metrics['due_coverage_pct']:g}%")
         c.metric("High priority covered", f"{metrics['high_priority_coverage_pct']:g}%")
         st.caption(
@@ -422,9 +428,8 @@ def _review(snapshot, now: datetime) -> None:
         )
         if not required_coverage.complete:
             st.warning(
-                f"This preview has {required_coverage.outstanding_minutes} minutes of "
-                "required study work due this week without a slot. "
-                "No plan can be called deadline-complete until that gap is resolved."
+                f"{_duration(required_coverage.outstanding_minutes)} of deadline work "
+                "still needs a study slot. Try another plan or add available hours."
             )
         if assessment.risks:
             st.markdown("**Work that still needs time**")
@@ -569,7 +574,10 @@ def _review(snapshot, now: datetime) -> None:
                 st.session_state.pop("calendar_adjusted_proposal", None)
                 st.session_state.pop("calendar_adjusted_strategy", None)
 
-            _save(save_accepted, "Your updated calendar is saved.")
+            _save(
+                save_accepted,
+                "Plan saved. Use Undo at the top of Calendar to restore the previous schedule.",
+            )
         if dismiss.button("Cancel preview", key="dismiss_rescue_plan"):
             st.session_state.pop("goal_previews", None)
             st.session_state.pop("reschedule_session_id", None)
@@ -600,13 +608,15 @@ def main() -> None:
         anchor_date = date.fromisoformat(date_param) if isinstance(date_param, str) else now.date()
     except ValueError:
         anchor_date = now.date()
-    st.markdown(
-        '<div class="pw-hero">'
-        "<h1>My Calendar</h1>"
-        "<p>Lectures, plans, and study time together. Review changes on your terms.</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    header, undo_area = st.columns([4.5, 1.5], gap="medium", vertical_alignment="center")
+    with header:
+        st.markdown(
+            '<div class="pw-hero">'
+            "<h1>My Calendar</h1>"
+            "<p>Lectures, plans, and study time together. Review changes on your terms.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
     try:
         snapshot = load_snapshot(DEFAULT_DB_PATH)
     except (sqlite3.Error, OSError, ValueError):
@@ -617,12 +627,14 @@ def main() -> None:
     message = st.session_state.pop("calendar_message", None)
     if message:
         st.success(message)
-    if has_undo_plan(DEFAULT_DB_PATH):
-        if st.button("↶ Undo last accepted plan", key="undo_last_plan"):
-            _save(
-                lambda: undo_last_plan(DEFAULT_DB_PATH, datetime.now()),
-                "Previous plan restored.",
-            )
+    undo_state = plan_undo_status(DEFAULT_DB_PATH)
+    if undo_state == "ready":
+        with undo_area:
+            if st.button("↶ Undo last plan", key="undo_last_plan"):
+                _save(
+                    lambda: undo_last_plan(DEFAULT_DB_PATH, datetime.now()),
+                    "Previous study schedule restored.",
+                )
     issues = accepted_conflicts(snapshot, now)
     if issues:
         st.info(f"{len(issues)} study blocks may need a new time.")
@@ -675,25 +687,26 @@ def main() -> None:
     with nav_today:
         st.button("Today", key="calendar_today", on_click=jump_to_today)
     selected_week_start, selected_week_end = week_bounds(date_to_view)
-    plan_actions, export_actions = st.columns([1, 1], gap="small")
-    with plan_actions:
-        # Callback runs before widgets are instantiated on the next rerun.
-        # Modifying calendar_browse_date directly after st.date_input would fail.
-        def start_plan():
-            st.session_state["start_week_plan"] = True
-            st.session_state["calendar_browse_date"] = now.date()
 
-        st.button(
-            "Plan my week",
-            key="calendar_plan_week",
-            type="primary",
-            on_click=start_plan,
-        )
-    with export_actions:
+    # Related actions are visible individually, without a large nested expander.
+    def start_plan():
+        st.session_state["start_week_plan"] = True
+        st.session_state["calendar_browse_date"] = now.date()
+
+    add_area, study_area, export_area, plan_area = st.columns([1.2, 1.4, 1.5, 1.6], gap="small")
+    with add_area:
+        _event_form(snapshot, date_to_view)
+    with study_area:
+        prefer_day = max(date_to_view, now.date())
+        _preferences(snapshot, prefer_day, week_bounds(prefer_day)[1])
+    with export_area:
         with st.popover("Export calendar"):
-            st.caption("Download your accepted study blocks and fixed events, not draft plans.")
+            st.caption(
+                "Import this file into Google Calendar or Apple Calendar. "
+                "This is a one-time download, not live sync."
+            )
             st.download_button(
-                "Download this week (.ics)",
+                "Download week (.ics)",
                 data=build_calendar_ics(
                     snapshot, start_day=selected_week_start, end_day=selected_week_end
                 ),
@@ -701,13 +714,13 @@ def main() -> None:
                 mime="text/calendar",
                 key="download_week_ics",
             )
-    plan_day = max(date_to_view, now.date())
-    plan_sunday = week_bounds(plan_day)[1]
-    left, right = st.columns([1, 1], gap="small")
-    with left:
-        _event_form(snapshot, date_to_view)
-    with right:
-        _preferences(snapshot, plan_day, plan_sunday)
+    with plan_area:
+        st.button(
+            "Plan my week",
+            key="calendar_plan_week",
+            type="primary",
+            on_click=start_plan,
+        )
     if not snapshot.budgets and not snapshot.windows:
         st.caption("Set a preferred study budget once to receive scheduling suggestions.")
     selected_session = _selected_item_id("session")
@@ -720,7 +733,7 @@ def main() -> None:
     # beneath a full-height timetable. Normal weeks remain calendar-first.
     if selected_week_start == monday:
         with st.expander(
-            "Rescue my week · Review suggested changes",
+            "Review a new plan",
             expanded=bool(issues) or bool(st.session_state.get("start_week_plan")),
         ):
             _review(snapshot, now)
@@ -741,7 +754,7 @@ def main() -> None:
             '<div class="pw-legend">'
             '<span><i style="background:#BAA9D0"></i>Study</span>'
             '<span><i style="background:#8FAACB"></i>Lectures</span>'
-            '<span><i style="background:#B7A0C9"></i>Social</span>'
+            '<span><i style="background:#D99EBB"></i>Social</span>'
             '<span><i style="background:#8AB9A6"></i>Exercise</span>'
             '<span><i style="background:#C8A99D"></i>Personal</span>'
             "</div>",
