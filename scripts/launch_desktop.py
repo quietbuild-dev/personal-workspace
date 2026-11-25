@@ -20,6 +20,95 @@ PROJECT = Path(__file__).resolve().parents[1]
 PYTHON = PROJECT / ".venv" / "Scripts" / "python.exe"
 LOCAL_FILES = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "PersonalWorkspace"
 LOG_PATH = LOCAL_FILES / "desktop-server.log"
+APP_USER_MODEL_ID = "QuietBuild.PersonalWorkspace.Desktop"
+WINDOW_TITLE = "Personal Workspace"
+
+
+def _set_windows_app_identity() -> None:
+    """Separate this GUI process from the generic Python taskbar group."""
+    if os.name != "nt":
+        return
+    set_app_id = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID
+    set_app_id.argtypes = [ctypes.c_wchar_p]
+    set_app_id.restype = ctypes.c_long
+    # A nonzero HRESULT means the OS did not accept the identity. Keep the
+    # application usable if Windows declines this cosmetic setting.
+    if set_app_id(APP_USER_MODEL_ID) != 0:
+        _record_icon_note("Windows did not accept the Personal Workspace AppUserModelID")
+
+
+def _record_icon_note(note: str) -> None:
+    """Provide diagnostic context without letting an icon failure stop the app."""
+    try:
+        LOCAL_FILES.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as log:
+            log.write(f"Desktop icon: {note}\n")
+    except OSError:
+        pass
+
+
+def _set_native_window_icon(icon_path: Path) -> None:
+    """Give the actual WinForms window large and small taskbar/titlebar icons.
+
+    A Windows shortcut icon is not automatically inherited by pythonw.exe.
+    Set WM_SETICON on the visible, process-owned WebView2 window instead.
+    """
+    if os.name != "nt" or not icon_path.is_file():
+        return
+
+    try:
+        user32 = ctypes.windll.user32
+        find_window = user32.FindWindowW
+        find_window.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        find_window.restype = ctypes.c_void_p
+        handle = find_window(None, WINDOW_TITLE)
+        if not handle:
+            _record_icon_note("Could not find the native app window")
+            return
+
+        get_window_pid = user32.GetWindowThreadProcessId
+        get_window_pid.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_window_pid.restype = ctypes.c_ulong
+        pid = ctypes.c_ulong()
+        get_window_pid(handle, ctypes.byref(pid))
+        if pid.value != os.getpid():
+            _record_icon_note("Native window was not owned by this launcher process")
+            return
+
+        get_metric = user32.GetSystemMetrics
+        get_metric.argtypes = [ctypes.c_int]
+        get_metric.restype = ctypes.c_int
+        load_icon = user32.LoadImageW
+        load_icon.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        load_icon.restype = ctypes.c_void_p
+        send = user32.SendMessageW
+        send.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+        send.restype = ctypes.c_ssize_t
+
+        # Windows chooses separate icon sizes for the title bar and taskbar.
+        for icon_kind, metric_x, metric_y in ((1, 11, 12), (0, 49, 50)):
+            image = load_icon(
+                None,
+                str(icon_path),
+                1,  # IMAGE_ICON
+                get_metric(metric_x),
+                get_metric(metric_y),
+                0x0010,  # LR_LOADFROMFILE
+            )
+            if image:
+                send(handle, 0x0080, icon_kind, image)  # WM_SETICON
+            else:
+                _record_icon_note(f"Windows could not load icon size {icon_kind}")
+    except (AttributeError, OSError, ValueError) as error:
+        _record_icon_note(f"Could not apply taskbar icon: {error}")
+
 
 
 def _open_embedded_window(url: str) -> None:
@@ -32,8 +121,12 @@ def _open_embedded_window(url: str) -> None:
             ".\\.venv\\Scripts\\python.exe -m pip install -r requirements-dev.txt"
         ) from exc
 
-    webview.create_window(
-        "Personal Workspace",
+    # Set process identity BEFORE any GUI appears, so the taskbar does not
+    # treat our desktop window as a generic pythonw.exe application.
+    _set_windows_app_identity()
+
+    window = webview.create_window(
+        WINDOW_TITLE,
         url=url,
         width=1280,
         height=820,
@@ -43,7 +136,15 @@ def _open_embedded_window(url: str) -> None:
     )
     # The GUI event loop exits when the app window closes. Do not silently
     # fall back to legacy Internet Explorer or a regular Edge browser.
-    webview.start(gui="edgechromium", debug=False, private_mode=True)
+    icon_path = PROJECT / "assets" / "personal-workspace.ico"
+    options = {"gui": "edgechromium", "debug": False, "private_mode": True}
+    if icon_path.is_file():
+        # pywebview 6.2+ accepts the icon; explicitly set WM_SETICON as well
+        # because the Windows taskbar may otherwise retain pythonw.exe's icon.
+        options["icon"] = str(icon_path)
+        if window is not None:
+            window.events.shown += lambda: _set_native_window_icon(icon_path)
+    webview.start(**options)
 
 
 def _free_local_port() -> int:
