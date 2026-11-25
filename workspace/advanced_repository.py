@@ -19,6 +19,8 @@ from workspace.advanced_planner import (
     RevisionProposal,
     SavedSession,
     StudyStep,
+    TaskDependency,
+    TaskState,
     TimeWindow,
     accepted_conflicts,
     validate_revision,
@@ -53,6 +55,12 @@ def initialize_advanced(db_path: Path) -> None:
                 checked INTEGER NOT NULL DEFAULT 0 CHECK(checked IN (0,1)),
                 CHECK((kind = 'checklist' AND estimate_minutes = 0 AND remaining_minutes = 0)
                       OR (kind = 'timed' AND estimate_minutes > 0 AND checked = 0))
+            );
+            CREATE TABLE IF NOT EXISTS task_dependencies (
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                prerequisite_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                PRIMARY KEY(task_id, prerequisite_id),
+                CHECK(task_id != prerequisite_id)
             );
             CREATE TABLE IF NOT EXISTS time_windows (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,6 +396,9 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
     deadline_rows = conn.execute("SELECT * FROM task_deadline_times ORDER BY task_id").fetchall()
     kind_rows = conn.execute("SELECT * FROM fixed_event_kinds ORDER BY event_id").fetchall()
     preference_rows = conn.execute("SELECT * FROM day_focus_preferences ORDER BY day").fetchall()
+    dependency_rows = conn.execute(
+        "SELECT * FROM task_dependencies ORDER BY task_id, prerequisite_id"
+    ).fetchall()
     # Include original task fields: editing a parent's deadline or priority invalidates proposals.
     payload = [
         [dict(row) for row in rows]
@@ -401,6 +412,7 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
             deadline_rows,
             kind_rows,
             preference_rows,
+            dependency_rows,
         )
     ]
     fingerprint = hashlib.sha256(
@@ -464,7 +476,41 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
         DayPreference(date.fromisoformat(row["day"]), row["start_minute"], row["end_minute"])
         for row in preference_rows
     )
-    return PlannerSnapshot(steps, windows, events, sessions, fingerprint, budgets, preferences)
+    dependencies = tuple(
+        TaskDependency(r["task_id"], r["prerequisite_id"]) for r in dependency_rows
+    )
+    states = tuple(TaskState(r["id"], r["status"] == "completed") for r in parent_rows)
+    return PlannerSnapshot(
+        steps, windows, events, sessions, fingerprint, budgets, preferences, dependencies, states
+    )
+
+
+def set_task_dependencies(db_path: Path, task_id: int, prerequisite_ids) -> None:
+    """Atomically replace one task's prerequisites after reference and cycle checks."""
+    from workspace.dependencies import dependency_context
+
+    ids = tuple(prerequisite_ids)
+    if (
+        type(task_id) is not int
+        or task_id <= 0
+        or any(type(i) is not int or i <= 0 for i in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise ValueError("Choose distinct valid prerequisite tasks.")
+    initialize_advanced(db_path)
+    with closing(_connect(db_path)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = {r[0] for r in conn.execute("SELECT id FROM tasks")}
+        if task_id not in existing or not set(ids) <= existing:
+            raise ValueError("A dependency references a missing task.")
+        if task_id in ids:
+            raise ValueError("A task cannot depend on itself.")
+        conn.execute("DELETE FROM task_dependencies WHERE task_id=?", (task_id,))
+        conn.executemany(
+            "INSERT INTO task_dependencies(task_id,prerequisite_id) VALUES (?,?)",
+            [(task_id, parent) for parent in ids],
+        )
+        dependency_context(_fetch_snapshot(conn))  # Exceptions roll back the whole replacement.
 
 
 def load_snapshot(db_path: Path) -> PlannerSnapshot:
@@ -654,6 +700,18 @@ def record_session(
             ):
                 raise ValueError("You cannot complete or miss a session before it begins or ends.")
             if status == "done":
+                from workspace.dependencies import prerequisite_ready
+
+                snapshot = _fetch_snapshot(conn)
+                task_id = next(s.task_id for s in snapshot.steps if s.id == row["step_id"])
+                if any(
+                    e.task_id == task_id and not prerequisite_ready(snapshot, e.prerequisite_id)
+                    for e in snapshot.dependencies
+                ):
+                    raise ValueError(
+                        "Record prerequisite completion before this dependent session. "
+                        "Reserved time alone is not completed work."
+                    )
                 if actual_minutes > row["remaining_minutes"]:
                     raise ValueError("Completed minutes exceed remaining step work.")
                 conn.execute(

@@ -1,7 +1,7 @@
 """Explain and compare safe, read-only timetable proposals.
 
-This module deliberately reuses the existing deterministic planner. A failed greedy
-placement is a warning under the current strategy, not proof of infeasibility.
+Risk assessment and metrics are shared by both engines. The original two-strategy
+comparison remains available as a baseline and for the quick lost-time simulation.
 """
 
 from dataclasses import dataclass, replace
@@ -88,6 +88,83 @@ def _assess(snapshot: PlannerSnapshot, revision: RevisionProposal, strategy: str
         due_shortfall_minutes=sum(r.unscheduled_minutes for r in risks),
         outside_week_minutes=outside,
     )
+
+
+def assess_proposal(snapshot: PlannerSnapshot, revision: RevisionProposal) -> PlanAssessment:
+    """Use the same deadline-risk calculation for every scheduling engine."""
+    return _assess(snapshot, revision, "rebuild")
+
+
+def schedule_metrics(snapshot: PlannerSnapshot, revision: RevisionProposal, now: datetime) -> dict:
+    """Comparable minute-based metrics, including days with zero planned work."""
+    from statistics import pstdev
+
+    from workspace.advanced_planner import _already_done_minutes, hourly_workload
+
+    steps = {s.id: s for s in snapshot.steps if s.kind == "timed" and not s.parent_completed}
+    high_need = sum(s.remaining_minutes for s in steps.values() if s.priority == 3)
+    due_need = sum(
+        s.remaining_minutes
+        for s in steps.values()
+        if s.deadline is not None and s.deadline <= revision.sunday
+    )
+    high = sum(s.minutes for s in revision.slots if steps[s.step_id].priority == 3)
+    due = sum(
+        s.minutes
+        for s in revision.slots
+        if steps[s.step_id].deadline is not None and steps[s.step_id].deadline <= revision.sunday
+    )
+    loads = {
+        day: value
+        for day, value in _already_done_minutes(snapshot).items()
+        if now.date() <= day <= revision.sunday
+    }
+    for day in hourly_workload(snapshot, now):
+        loads.setdefault(day, 0)
+    for slot in revision.slots:
+        loads[slot.day] += slot.minutes
+    assessment = assess_proposal(snapshot, revision)
+    old = {
+        (s.step_id, s.day, s.start, s.end)
+        for s in snapshot.sessions
+        if s.status == "planned" and revision.monday <= s.day <= revision.sunday
+    }
+    new = {(s.step_id, s.day, s.start, s.end) for s in revision.slots}
+    removed, added = old - new, new - old
+    # Pair changed blocks of the same step for an explicit movement-count convention.
+    moved = sum(
+        min(sum(key[0] == i for key in removed), sum(key[0] == i for key in added))
+        for i in {key[0] for key in removed}
+    )
+    return {
+        "scheduled_minutes": revision.planned_minutes,
+        "deadline_urgency_score": sum(
+            s.minutes * (8 - (steps[s.step_id].deadline - now.date()).days)
+            for s in revision.slots
+            if steps[s.step_id].deadline is not None
+            and now.date() <= steps[s.step_id].deadline <= revision.sunday
+        ),
+        "priority_weighted_minutes": sum(
+            s.minutes * {1: 1, 2: 3, 3: 9}[steps[s.step_id].priority] for s in revision.slots
+        ),
+        "before_deadline_minutes": sum(
+            s.minutes for s in revision.slots if steps[s.step_id].deadline is not None
+        ),
+        "due_coverage_pct": round(100 * due / due_need, 1) if due_need else 100.0,
+        "high_priority_minutes": high,
+        "high_priority_coverage_pct": round(100 * high / high_need, 1) if high_need else 100.0,
+        "deadline_shortfall_minutes": assessment.due_shortfall_minutes,
+        "tasks_at_risk": len(assessment.risks),
+        "preserved_sessions": revision.unchanged,
+        "moved_or_removed_sessions": revision.removed_or_changed,
+        "moved_sessions": moved,
+        "removed_sessions": len(removed) - moved,
+        "added_or_changed_sessions": revision.added_or_changed,
+        "daily_std_minutes": round(pstdev(loads.values()), 2),
+        "peak_day_minutes": max(loads.values(), default=0),
+        "session_count": len(revision.slots),
+        "short_sessions": sum(s.minutes < 25 for s in revision.slots),
+    }
 
 
 def compare_plans(

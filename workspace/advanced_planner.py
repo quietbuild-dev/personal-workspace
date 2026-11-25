@@ -94,6 +94,18 @@ class DayPreference:
 
 
 @dataclass(frozen=True)
+class TaskDependency:
+    task_id: int
+    prerequisite_id: int
+
+
+@dataclass(frozen=True)
+class TaskState:
+    id: int
+    completed: bool
+
+
+@dataclass(frozen=True)
 class PlannerSnapshot:
     steps: tuple[StudyStep, ...]
     windows: tuple[TimeWindow, ...]
@@ -102,6 +114,8 @@ class PlannerSnapshot:
     fingerprint: str
     budgets: tuple[DayBudget, ...] = ()
     preferences: tuple[DayPreference, ...] = ()
+    dependencies: tuple[TaskDependency, ...] = ()
+    task_states: tuple[TaskState, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -219,7 +233,7 @@ def _eligible_saved(
 def accepted_conflicts(snapshot: PlannerSnapshot, now: datetime) -> tuple[str, ...]:
     """Surface accepted sessions invalidated by changed commitments or time windows."""
     steps = {step.id: step for step in snapshot.steps}
-    occupied = _blocked_by_events(snapshot.events)
+    occupied = occupied_history(snapshot)
     issues: list[str] = []
     limits = _daily_limits(snapshot)
     booked = _already_done_minutes(snapshot)
@@ -241,6 +255,19 @@ def accepted_conflicts(snapshot: PlannerSnapshot, now: datetime) -> tuple[str, .
             )
         occupied.setdefault(session.day, []).append((session.start, session.end))
         booked[session.day] = booked.get(session.day, 0) + session.end - session.start
+    from workspace.dependencies import validate_dependencies
+
+    try:
+        validate_dependencies(
+            snapshot,
+            tuple(
+                Slot(s.step_id, s.day, s.start, s.end)
+                for s in snapshot.sessions
+                if s.status == "planned" and s.step_id in steps
+            ),
+        )
+    except ValueError as error:
+        issues.append(str(error))
     return tuple(issues)
 
 
@@ -248,6 +275,15 @@ def _blocked_by_events(events: tuple[FixedEvent, ...]) -> dict[date, list[tuple[
     blocked: dict[date, list[tuple[int, int]]] = {}
     for event in events:
         blocked.setdefault(event.day, []).append((event.start, event.end))
+    return blocked
+
+
+def occupied_history(snapshot: PlannerSnapshot) -> dict[date, list[tuple[int, int]]]:
+    """Completed sessions remain on the calendar even when a week is replanned."""
+    blocked = _blocked_by_events(snapshot.events)
+    for session in snapshot.sessions:
+        if session.status == "done":
+            blocked.setdefault(session.day, []).append((session.start, session.end))
     return blocked
 
 
@@ -298,9 +334,12 @@ def make_revision(
     for step in steps.values():
         if not 0 <= step.remaining_minutes <= step.estimate_minutes:
             raise ValueError("Step remaining time is outside its estimate.")
+    from workspace.dependencies import dependency_context, prerequisite_ready, validate_dependencies
+
+    ranks, prerequisites = dependency_context(snapshot)
 
     existing = [s for s in snapshot.sessions if s.status == "planned" and monday <= s.day <= sunday]
-    occupied = _blocked_by_events(snapshot.events)
+    occupied = occupied_history(snapshot)
     if reschedule_session_id is not None:
         target = next(
             (session for session in existing if session.id == reschedule_session_id), None
@@ -322,6 +361,10 @@ def make_revision(
             step = steps.get(session.step_id)
             if step is None or session.day < today:
                 continue
+            if any(
+                not prerequisite_ready(snapshot, parent) for parent in prerequisites[step.task_id]
+            ):
+                continue
             if allocated[step.id] + session.end - session.start > step.remaining_minutes:
                 continue
             if (
@@ -338,20 +381,55 @@ def make_revision(
 
     shortfalls: list[Shortfall] = []
     sorted_steps = sorted(
-        steps.values(), key=lambda s: (s.deadline or date.max, -s.priority, s.task_id, s.id)
+        steps.values(),
+        key=lambda s: (ranks[s.task_id], s.deadline or date.max, -s.priority, s.task_id, s.id),
     )
     for step in sorted_steps:
         remainder = step.remaining_minutes - allocated[step.id]
         if remainder <= 0:
+            continue
+        release = (today, 0)
+        dependency_blocked = False
+        for parent in prerequisites[step.task_id]:
+            if prerequisite_ready(snapshot, parent):
+                continue
+            parent_steps = [s for s in snapshot.steps if s.task_id == parent]
+            if (
+                not any(s.kind == "timed" for s in parent_steps)
+                or any(s.kind == "checklist" and not s.checked for s in parent_steps)
+                or any(
+                    allocated.get(s.id, 0) < s.remaining_minutes
+                    for s in parent_steps
+                    if s.kind == "timed"
+                )
+            ):
+                dependency_blocked = True
+                break
+            parent_ids = {s.id for s in parent_steps}
+            release = max(
+                release,
+                max(((s.day, s.end) for s in slots if s.step_id in parent_ids), default=release),
+            )
+        if dependency_blocked:
+            reason = (
+                "could_not_fit" if step.deadline and step.deadline <= sunday else "outside_week"
+            )
+            if step.deadline and step.deadline < today:
+                reason = "overdue"
+            shortfalls.append(Shortfall(step.id, remainder, reason))
             continue
         if step.deadline is not None and step.deadline < today:
             shortfalls.append(Shortfall(step.id, remainder, "overdue"))
             continue
         for offset in range((sunday - today).days + 1):
             day = today + timedelta(days=offset)
+            if day < release[0]:
+                continue
             if step.deadline is not None and day > step.deadline:
                 break
             earliest = minute_now if day == today else 0
+            if day == release[0]:
+                earliest = max(earliest, release[1])
             for start, end in _gap_intervals(day, windows, occupied.get(day, []), earliest):
                 if step.deadline == day and step.deadline_minute is not None:
                     end = min(end, step.deadline_minute)
@@ -382,7 +460,7 @@ def make_revision(
     proposed_keys = {(s.step_id, s.day, s.start, s.end) for s in slots}
     old_keys = {(s.step_id, s.day, s.start, s.end) for s in existing}
     unchanged_keys = old_keys & proposed_keys
-    return RevisionProposal(
+    proposal = RevisionProposal(
         monday=monday,
         sunday=sunday,
         fingerprint=snapshot.fingerprint,
@@ -393,10 +471,14 @@ def make_revision(
         added_or_changed=len(proposed_keys - old_keys),
         unchanged_minutes=sum(end - start for _, _, start, end in unchanged_keys),
     )
+    validate_dependencies(snapshot, proposal.slots)
+    return proposal
 
 
 def validate_revision(snapshot: PlannerSnapshot, proposal: RevisionProposal, now: datetime) -> None:
     """Independent safety checks, including cases where a proposal was forged/tampered."""
+    if not isinstance(now, datetime) or now.tzinfo is not None:
+        raise ValueError("Use a naive local datetime for the local weekly calendar.")
     monday, sunday = week_bounds(now.date())
     if proposal.monday != monday or proposal.sunday != sunday:
         raise ValueError("This proposal belongs to a different week. Generate a new one.")
@@ -404,12 +486,19 @@ def validate_revision(snapshot: PlannerSnapshot, proposal: RevisionProposal, now
         raise ValueError("Tasks or commitments changed. Generate a fresh proposal.")
     steps = {s.id: s for s in snapshot.steps if s.kind == "timed" and not s.parent_completed}
     allocated: dict[int, int] = {}
-    occupied = _blocked_by_events(snapshot.events)
+    occupied = occupied_history(snapshot)
     windows = effective_windows(snapshot)
     limits = _daily_limits(snapshot)
     booked = _already_done_minutes(snapshot)
     cutoff = now.hour * 60 + now.minute + (now.second > 0 or now.microsecond > 0)
     for slot in proposal.slots:
+        if (
+            type(slot.step_id) is not int
+            or type(slot.day) is not date
+            or type(slot.start) is not int
+            or type(slot.end) is not int
+        ):
+            raise ValueError("Session dates and times must use calendar dates and whole minutes.")
         step = steps.get(slot.step_id)
         if step is None:
             raise ValueError("Proposal references a missing or completed study step.")
@@ -438,7 +527,12 @@ def validate_revision(snapshot: PlannerSnapshot, proposal: RevisionProposal, now
             raise ValueError("A study step was allocated more time than remains.")
     residuals: dict[int, int] = {}
     for item in proposal.shortfalls:
-        if item.step_id not in steps or item.minutes <= 0 or item.step_id in residuals:
+        if (
+            type(item.minutes) is not int
+            or item.step_id not in steps
+            or item.minutes <= 0
+            or item.step_id in residuals
+        ):
             raise ValueError("Proposal has invalid remaining-work records.")
         residuals[item.step_id] = item.minutes
     if any(
@@ -446,13 +540,16 @@ def validate_revision(snapshot: PlannerSnapshot, proposal: RevisionProposal, now
         for i, step in steps.items()
     ):
         raise ValueError("The proposal does not account for all remaining study work.")
+    from workspace.dependencies import validate_dependencies
+
+    validate_dependencies(snapshot, proposal.slots)
 
 
 def hourly_workload(snapshot: PlannerSnapshot, now: datetime) -> dict[date, tuple[int, int]]:
     """Actual free-window minutes and *accepted* booked minutes for each remaining day."""
     today = now.date()
     _, sunday = week_bounds(today)
-    events = _blocked_by_events(snapshot.events)
+    events = occupied_history(snapshot)
     windows = effective_windows(snapshot)
     limits = _daily_limits(snapshot)
     completed = _already_done_minutes(snapshot)

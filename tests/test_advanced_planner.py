@@ -115,8 +115,10 @@ class AdvancedPlannerTests(unittest.TestCase):
         snapshot, revision = self.current()
         self.assertEqual(next(s for s in snapshot.steps if s.id == self.step).remaining_minutes, 90)
         self.assertEqual(revision.unchanged, 1)
-        self.assertEqual(sum(s.minutes for s in revision.slots), 90)
-        self.assertEqual(revision.shortfalls, ())
+        # Completed blocks remain occupied even when only part of their estimate
+        # was worked. Replanning must not double-book their recorded calendar time.
+        self.assertEqual(sum(s.minutes for s in revision.slots), 60)
+        self.assertEqual(sum(s.minutes for s in revision.shortfalls), 30)
         with self.assertRaises(ValueError):
             # Cannot double-log work.
             record_session(self.db, session.id, "done", 10, now=datetime(2026, 11, 17, 10, 6))

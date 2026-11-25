@@ -79,7 +79,7 @@ class HomePolishTests(unittest.TestCase):
         self.assertNotIn("Your week, at a glance", week)
         self.assertIn("Completed today", home)
         self.assertIn('st.switch_page("workspace/views/task_board.py")', home)
-        self.assertIn("'✓ ' if active", week)
+        self.assertIn("choose_goal_preview(snapshot, now, reschedule_id)", week)
         self.assertNotIn('st.caption(f"Selected: {selected}")', week)
 
     def test_desktop_shortcut_is_nonprivileged_and_uses_project_launcher(self):

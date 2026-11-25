@@ -10,18 +10,19 @@ The app is written in Python 3.12, with Streamlit for the interface and SQLite f
 - **Tasks:** create assignments and quick to-dos, set deadlines and priorities, and track checklists and remaining work. Not every to-do has to become a study session.
 - **Calendar:** view lectures, appointments, personal plans and scheduled study blocks by day or week. Open a session to see its linked assignment and record progress.
 - **Study preferences:** set an earliest start, latest finish and maximum study hours for a day. Fixed commitments are taken into account when suggesting study times.
-- **Rescue My Week:** compare a plan that keeps as many existing sessions as possible with one that rearranges more of the week to fit unfinished work. Review the proposed Before/After timetable before accepting it.
+- **Rescue My Week:** choose deadlines, important tasks, routine, total work or workload balance. Compare goal previews and review the Before/After timetable before approval.
+- **Prerequisites:** define which tasks must come first; the planner checks task dependencies without marking reserved work complete.
 - **What-if and undo:** preview the effect of losing study time without changing saved data; undo the most recent accepted plan when restoration is still safe.
 
 The interface is intended to stay simple for everyday tasks, while detailed task and planning controls remain available under **Advanced**.
 
 ## The scheduling part
 
-The scheduling engine works with deadlines, remaining work, daily study limits, preferred hours and fixed calendar events. It uses a deterministic, constraint-aware heuristic rather than a globally optimal solver.
+The scheduling engine works with deadlines, remaining work, daily study limits, preferred hours and fixed calendar events. Rescue My Week uses a bounded OR-Tools CP-SAT optimizer, with the original deterministic greedy heuristic as its baseline and fallback. Optimality is reported only when all objective levels are proved for the modeled week.
 
-Replanning is the main engineering focus. We compare two different objectives: minimizing disruption to an existing plan, and finding more room for unfinished work. Proposed changes are not saved automatically. Before accepting a plan, the application checks it against the latest database state; undo also checks whether restoring the previous sessions is safe.
+Replanning is the main engineering focus. Five objective profiles make different trade-offs between deadlines, priority, routine, throughput and peak daily workload. Proposed changes are not saved automatically. Before accepting a plan, the application checks it against the latest database state; undo also checks whether restoring the previous sessions is safe.
 
-A repeatable synthetic comparison of the replanning strategies is included in `scripts/evaluate_rescue.py`, with additional explanation in `docs/RESCUE_MY_WEEK.md`.
+See the [mathematical model and safe review guide](docs/GOAL_BASED_OPTIMIZER.md) and [experimental evaluation](docs/OPTIMIZER_EVALUATION.md). The benchmark in `scripts/evaluate_optimizer.py` compares both greedy strategies with all five goals. Install the updated requirements to enable OR-Tools.
 
 ## Run it on Windows
 
@@ -75,12 +76,15 @@ On the Windows development setup:
 .\.venv\Scripts\python.exe -m scripts.check_ui
 ```
 
-At the latest desktop-launcher checkpoint, **163 tests and 58 subtests passed**. Ruff and formatting checks passed, and the Home/Calendar smoke checks loaded successfully. The desktop launcher's separate-window behavior was also checked manually on Windows. These checks do not replace a full manual walkthrough of every workflow.
+The optimizer checkpoint passes **209 tests and 58 subtests**, lint, formatting,
+and Home/Calendar smoke checks. `scripts.check_optimizer_ui` also exercises goal
+preview/comparison, approval, Undo and prerequisite editing on temporary data.
+The Windows desktop launcher has not been manually retested for this upgrade.
 
-To compare the two replanning strategies:
+To reproduce the seven-method comparison on 15 synthetic scenarios:
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.evaluate_rescue --repeats 30
+.\.venv\Scripts\python.exe -m scripts.evaluate_optimizer --repeats 3 --time-limit 1 --csv docs/optimizer-benchmark.csv
 ```
 
 ## Project structure
@@ -94,7 +98,10 @@ To compare the two replanning strategies:
 | `workspace/views/week.py` | Calendar, preferences, session actions and replanning |
 | `workspace/views/weekly_calendar.py` | Calendar rendering |
 | `workspace/views/schedule_comparison.py` | Before/After schedule comparison |
-| `workspace/advanced_planner.py` | Scheduling logic and constraints |
+| `workspace/advanced_planner.py` | Greedy baseline and independent constraints |
+| `workspace/optimizer.py` | CP-SAT model and five objective profiles |
+| `workspace/dependencies.py` | Dependency graph and precedence validation |
+| `workspace/conflict_analysis.py` | Calculated capacity bounds and suggestions |
 | `workspace/planning_insights.py` | Replanning comparisons and risk summaries |
 | `workspace/advanced_repository.py` | SQLite operations, plan acceptance and undo |
 | `workspace/quick_tasks.py` | Task creation, editing and optional scheduling |
