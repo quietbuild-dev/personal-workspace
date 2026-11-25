@@ -21,6 +21,7 @@ page = st.navigation(
             st.Page("workspace/views/home.py", title="Home", default=True, icon=":material/home:"),
             st.Page("workspace/views/week.py", title="Calendar", icon=":material/calendar_month:"),
             st.Page("workspace/views/task_board.py", title="Tasks", icon=":material/checklist:"),
+            st.Page("workspace/views/settings.py", title="Settings", icon=":material/tune:"),
         ],
         "Advanced": [
             st.Page(

@@ -22,6 +22,7 @@ from workspace.advanced_repository import (
 )
 from workspace.calendar_export import build_calendar_ics
 from workspace.conflict_analysis import analyze_conflicts
+from workspace.deadline_guarantees import check_required_coverage
 from workspace.manual_planning import move_proposed_block
 from workspace.planning_insights import (
     assess_proposal,
@@ -30,6 +31,7 @@ from workspace.planning_insights import (
     schedule_metrics,
 )
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
+from workspace.study_dna import load_study_dna, required_task_ids
 from workspace.theme import priority_badge
 from workspace.views.goal_preview import choose_goal_preview
 from workspace.views.schedule_comparison import (
@@ -390,7 +392,11 @@ def _review(snapshot, now: datetime) -> None:
     with st.container(border=True):
         st.markdown("### Rescue my week")
         st.caption("Choose a goal and review the proposal. Nothing changes until you approve.")
-        result, selected = choose_goal_preview(snapshot, now, reschedule_id)
+        local_dna = load_study_dna(DEFAULT_DB_PATH)
+        required = required_task_ids(DEFAULT_DB_PATH, list_tasks(DEFAULT_DB_PATH))
+        result, selected = choose_goal_preview(
+            snapshot, now, reschedule_id, dna=local_dna, must_ids=required
+        )
         if result is None:
             return
         if st.session_state.get("calendar_adjusted_strategy") != selected:
@@ -403,6 +409,7 @@ def _review(snapshot, now: datetime) -> None:
             else assessment.revision
         )
         assessment = assess_proposal(snapshot, proposal)
+        required_coverage = check_required_coverage(snapshot, proposal, now, required)
         changed_count = proposal.removed_or_changed + proposal.added_or_changed
         metrics = schedule_metrics(snapshot, proposal, now)
         a, b, c = st.columns(3, gap="small")
@@ -413,6 +420,12 @@ def _review(snapshot, now: datetime) -> None:
             f"{proposal.removed_or_changed} existing blocks changed · "
             f"{proposal.unchanged} kept. Percentages mean time allocated, not work completed."
         )
+        if not required_coverage.complete:
+            st.warning(
+                f"This preview has {required_coverage.outstanding_minutes} minutes of "
+                "required study work due this week without a slot. "
+                "No plan can be called deadline-complete until that gap is resolved."
+            )
         if assessment.risks:
             st.markdown("**Work that still needs time**")
             for risk in assessment.risks[:3]:
@@ -531,12 +544,22 @@ def _review(snapshot, now: datetime) -> None:
                                 st.session_state["calendar_adjusted_proposal"] = moved
                                 st.session_state["calendar_adjusted_strategy"] = selected
                                 st.rerun()
+        accept_incomplete = False
+        if not required_coverage.complete:
+            accept_incomplete = st.checkbox(
+                "I understand this plan leaves required work unscheduled",
+                value=False,
+                key="acknowledge_incomplete_plan",
+            )
         accept, dismiss = st.columns(2, gap="small")
         if accept.button(
             "Approve changes",
             type="primary",
             key="accept_rescue_plan",
-            disabled=not (proposal.added_or_changed or proposal.removed_or_changed),
+            disabled=(
+                not (proposal.added_or_changed or proposal.removed_or_changed)
+                or (not required_coverage.complete and not accept_incomplete)
+            ),
         ):
 
             def save_accepted():

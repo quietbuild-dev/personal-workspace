@@ -74,12 +74,12 @@ class HomePolishTests(unittest.TestCase):
         board = (ROOT / "workspace/views/task_board.py").read_text(encoding="utf-8")
         week = (ROOT / "workspace/views/week.py").read_text(encoding="utf-8")
         self.assertIn(":material/event_available:", app)
-        self.assertIn("A clearer view of your tasks, deadlines, and the week ahead.", home)
+        self.assertIn("Your tasks, deadlines and one sensible next step.", home)
         self.assertNotIn("One place to capture work, check off steps", board)
         self.assertNotIn("Your week, at a glance", week)
         self.assertIn("Completed today", home)
         self.assertIn('st.switch_page("workspace/views/task_board.py")', home)
-        self.assertIn("choose_goal_preview(snapshot, now, reschedule_id)", week)
+        self.assertIn("choose_goal_preview(", week)
         self.assertNotIn('st.caption(f"Selected: {selected}")', week)
 
     def test_desktop_shortcut_is_nonprivileged_and_uses_project_launcher(self):

@@ -3,20 +3,28 @@
 import streamlit as st
 
 from workspace.advanced_planner import validate_revision
+from workspace.deadline_guarantees import check_required_coverage
 from workspace.optimizer import GOAL_NOTES, GOALS, optimize
 from workspace.planning_insights import schedule_metrics
 from workspace.schedule_quality import describe_goal_tradeoff
 
 
-def choose_goal_preview(snapshot, now, reschedule_id):
-    identity = (snapshot.fingerprint, now.date(), reschedule_id)
+def choose_goal_preview(snapshot, now, reschedule_id, *, dna=None, must_ids=frozenset()):
+    identity = (snapshot.fingerprint, now.date(), reschedule_id, dna, must_ids)
     cache = st.session_state.get("goal_previews")
     if cache is None or cache[0] != identity:
         cache = (identity, now, {})
         st.session_state["goal_previews"] = cache
 
+    default = "deadlines"
+    if dna is not None:
+        default = {"steady": "balance", "batch": "throughput"}.get(dna.distribution, "deadlines")
     selected = st.selectbox(
-        "What matters most this week?", list(GOALS), format_func=GOALS.get, key="optimizer_goal"
+        "What matters most this week?",
+        list(GOALS),
+        index=list(GOALS).index(default),
+        format_func=GOALS.get,
+        key="optimizer_goal",
     )
     st.caption(GOAL_NOTES[selected])
 
@@ -32,7 +40,13 @@ def choose_goal_preview(snapshot, now, reschedule_id):
         st.session_state.pop("calendar_adjusted_proposal", None)
     if refresh or (cache[2] and selected not in cache[2]):
         cache[2][selected] = optimize(
-            snapshot, now, goal=selected, reschedule_session_id=reschedule_id
+            snapshot,
+            now,
+            goal=selected,
+            reschedule_session_id=reschedule_id,
+            dna=dna,
+            compact=bool(dna and dna.distribution == "batch" and selected == "throughput"),
+            require_task_ids=must_ids,
         )
 
     result = cache[2].get(selected)
@@ -52,15 +66,22 @@ def choose_goal_preview(snapshot, now, reschedule_id):
             for goal in GOALS:
                 if goal not in cache[2]:
                     cache[2][goal] = optimize(
-                        snapshot, cache[1], goal=goal, reschedule_session_id=reschedule_id
+                        snapshot,
+                        cache[1],
+                        goal=goal,
+                        reschedule_session_id=reschedule_id,
+                        dna=dna,
+                        compact=bool(dna and dna.distribution == "batch" and goal == "throughput"),
+                        require_task_ids=must_ids,
                     )
-        if len(cache[2]) > 1:
-            if selected != "routine" and "routine" in cache[2]:
+        compared_goals = {k: v for k, v in cache[2].items() if k in GOALS}
+        if len(compared_goals) > 1:
+            if selected != "routine" and "routine" in compared_goals:
                 chosen_metrics = schedule_metrics(snapshot, result.revision, cache[1])
                 routine_metrics = schedule_metrics(snapshot, cache[2]["routine"].revision, cache[1])
                 st.caption(describe_goal_tradeoff(chosen_metrics, routine_metrics))
             rows = []
-            for goal, alternative in cache[2].items():
+            for goal, alternative in compared_goals.items():
                 metrics = schedule_metrics(snapshot, alternative.revision, cache[1])
                 rows.append(
                     {
@@ -77,4 +98,82 @@ def choose_goal_preview(snapshot, now, reschedule_id):
             )
         else:
             st.caption("Compare the alternative plans only if you want to explore trade-offs.")
+    # Both variants must allocate all remaining required timed work due this week.
+    # Unlike objective comparisons, this screen never labels a shortfall a complete plan.
+    with st.expander("Plan A vs Plan B · Same deadlines, different rhythms", expanded=False):
+        st.caption(
+            "Plan A spreads study time more evenly. Plan B groups study into fewer days "
+            "around fixed commitments. Both must cover every required study estimate "
+            "due this week before we offer them as alternatives."
+        )
+        if st.button("Build both plans", key="build_ab_plans"):
+            cache[2]["ab_steady"] = optimize(
+                snapshot,
+                now,
+                goal="balance",
+                reschedule_session_id=reschedule_id,
+                dna=dna,
+                require_task_ids=must_ids,
+                time_limit=3.0,
+            )
+            cache[2]["ab_focus"] = optimize(
+                snapshot,
+                now,
+                goal="throughput",
+                reschedule_session_id=reschedule_id,
+                dna=dna,
+                compact=True,
+                require_task_ids=must_ids,
+                time_limit=3.0,
+            )
+            st.session_state.pop("calendar_adjusted_proposal", None)
+        a, b = cache[2].get("ab_steady"), cache[2].get("ab_focus")
+        if a is not None and b is not None:
+            usable = True
+            rows = []
+            for label, candidate in (("Plan A · Steady", a), ("Plan B · Focus days", b)):
+                try:
+                    validate_revision(snapshot, candidate.revision, now)
+                except ValueError:
+                    usable = False
+                    st.warning("The calendar changed. Rebuild both plans.")
+                    break
+                coverage = check_required_coverage(snapshot, candidate.revision, now, must_ids)
+                metrics = schedule_metrics(snapshot, candidate.revision, now)
+                if not coverage.complete:
+                    usable = False
+                    st.warning(
+                        f"{label}: {coverage.outstanding_minutes} required minutes remain "
+                        "without a slot. We can't present this as a deadline-complete plan."
+                    )
+                rows.append(
+                    {
+                        "Plan": label,
+                        "Required work allocated": (
+                            f"{coverage.allocated_minutes}/{coverage.required_minutes} min"
+                        ),
+                        "Study days": len({s.day for s in candidate.revision.slots}),
+                        "Busiest day": f"{metrics['peak_day_minutes'] / 60:g}h",
+                        "Blocks changed": metrics["moved_or_removed_sessions"],
+                    }
+                )
+            if usable:
+                st.dataframe(rows, hide_index=True, width="stretch")
+                if a.revision.slots == b.revision.slots:
+                    st.caption("Both objectives produced the same feasible schedule this week.")
+                choice = st.radio(
+                    "Review a proposed plan",
+                    ("Current goal", "Plan A · Steady", "Plan B · Focus days"),
+                    key="ab_plan_choice",
+                    horizontal=True,
+                )
+                if choice != "Current goal":
+                    selected = "ab_steady" if choice.startswith("Plan A") else "ab_focus"
+                    result = cache[2][selected]
+                    st.caption("The Before/After review and approval below use this selection.")
+            else:
+                st.caption(
+                    "Try changing availability or reducing optional work, then rebuild. "
+                    "A bounded search cannot prove a complete plan is impossible."
+                )
     return result, selected
