@@ -17,12 +17,12 @@ from workspace.advanced_repository import (
     plan_undo_status,
     record_session,
     save_week_preferences,
-    undo_last_plan,
     update_fixed_event,
 )
 from workspace.calendar_export import build_calendar_ics
 from workspace.conflict_analysis import analyze_conflicts
 from workspace.deadline_guarantees import check_required_coverage
+from workspace.life_planning import undo_last_plan_with_protection as undo_last_plan
 from workspace.manual_planning import move_proposed_block
 from workspace.optimizer import GOALS
 from workspace.planning_insights import (
@@ -35,6 +35,7 @@ from workspace.repository import DEFAULT_DB_PATH, list_tasks
 from workspace.study_dna import load_study_dna, required_task_ids
 from workspace.theme import priority_badge
 from workspace.views.goal_preview import choose_goal_preview
+from workspace.views.life_time import render_time_protection
 from workspace.views.schedule_comparison import (
     before_after_html,
     changed_days,
@@ -732,6 +733,7 @@ def main() -> None:
     # Keep urgent schedule repairs above the calendar so they are not buried
     # beneath a full-height timetable. Normal weeks remain calendar-first.
     if selected_week_start == monday:
+        render_time_protection(snapshot, now, DEFAULT_DB_PATH)
         with st.expander(
             "Review a new plan",
             expanded=bool(issues) or bool(st.session_state.get("start_week_plan")),
