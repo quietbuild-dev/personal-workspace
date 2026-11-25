@@ -85,7 +85,7 @@ class HomePolishTests(unittest.TestCase):
     def test_desktop_shortcut_is_nonprivileged_and_uses_project_launcher(self):
         ps = (ROOT / "scripts/create_desktop_shortcut.ps1").read_text(encoding="utf-8")
         self.assertIn("WScript.Shell", ps)
-        self.assertIn("Launch Personal Workspace.bat", ps)
+        self.assertIn("Launch Personal Workspace Desktop.vbs", ps)
         self.assertTrue((ROOT / "assets/personal-workspace.ico").is_file())
         self.assertNotIn("Register-ScheduledTask", ps)
 
