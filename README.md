@@ -1,32 +1,39 @@
-﻿# Personal Workspace
+# Personal Workspace
 
-Personal Workspace is a local study planner built for Bocconi's Software Engineering course (20875). We wanted a way to turn a list of deadlines into an actual plan for the week, without having to rearrange every study session by hand when something changes.
+**A local study planner that turns deadlines into a realistic weekly schedule.**
 
-The app is written in Python 3.12, with Streamlit for the interface and SQLite for local data. It uses a dark **Smoky Lavender** design and has a Windows desktop launcher, so it can open in its own window instead of a normal browser tab.
+We built Personal Workspace for Bocconi's Software Engineering course (20875). A list of assignments tells you *what* needs to get done, but not necessarily *when* you'll find time for it. Our app combines tasks, calendar commitments, and study preferences to suggest a plan—and helps you revise that plan when your week changes.
 
-## What it does
+The application is written in **Python 3.12**, with **Streamlit** for the interface, **SQLite** for local storage, **OR-Tools CP-SAT** for constraint-based scheduling, and **pywebview/WebView2** for its Windows desktop window. The interface uses a dark *Smoky Lavender* theme.
 
-- **Home:** see what needs attention today, upcoming deadlines, priorities, progress, and recently completed work.
-- **Tasks:** create assignments and quick to-dos, set deadlines and priorities, and track checklists and remaining work. Not every to-do has to become a study session.
-- **Calendar:** view lectures, appointments, personal plans and scheduled study blocks by day or week. Open a session to see its linked assignment and record progress.
-- **Study preferences:** set an earliest start, latest finish and maximum study hours for a day. Fixed commitments are taken into account when suggesting study times.
-- **Rescue My Week:** choose deadlines, important tasks, routine, total work or workload balance. Compare goal previews and review the Before/After timetable before approval.
-- **Prerequisites:** define which tasks must come first; the planner checks task dependencies without marking reserved work complete.
-- **What-if and undo:** preview the effect of losing study time without changing saved data; undo the most recent accepted plan when restoration is still safe.
+## Features
 
-The interface is intended to stay simple for everyday tasks, while detailed task and planning controls remain available under **Advanced**.
+- **Home:** See today's priorities, upcoming deadlines, progress, and recently completed work.
+- **Tasks:** Create assignments and quick to-dos, choose priorities and deadlines, set estimated work, and manage categories, checklists, and subtasks. Multiple subtasks can be added at once. Not every to-do has to become a study session.
+- **Calendar:** View lectures, appointments, personal events, and study sessions in day or week view. Open study sessions to check their linked tasks and record progress.
+- **Plan My Week:** Generate a proposed weekly study schedule from Home or Calendar. Review it before anything is saved.
+- **Rescue My Week:** When plans change, compare five scheduling goals: **Meet my deadlines**, **Focus on important tasks**, **Keep my routine**, **Get as much done as possible**, and **Balance my workload**.
+- **Constraints and prerequisites:** Set preferred study hours and a maximum daily workload. Fixed commitments block unavailable time, and task dependencies determine which work must come first.
+- **Review, what-if, and Undo:** Inspect a Before/After timetable, test reduced availability without changing saved data, approve a feasible proposal, and safely undo the latest accepted plan when possible.
+- **Calendar export:** Download accepted study sessions and fixed events for the selected week as an `.ics` file for import into calendar applications. This is a one-time export, **not** live synchronization.
 
-## The scheduling part
+Everyday controls are kept simple; more detailed scheduling and task settings are available under **Advanced**.
 
-The scheduling engine works with deadlines, remaining work, daily study limits, preferred hours and fixed calendar events. Rescue My Week uses a bounded OR-Tools CP-SAT optimizer, with the original deterministic greedy heuristic as its baseline and fallback. Optimality is reported only when all objective levels are proved for the modeled week.
+## How scheduling works
 
-Replanning is the main engineering focus. Five objective profiles make different trade-offs between deadlines, priority, routine, throughput and peak daily workload. Proposed changes are not saved automatically. Before accepting a plan, the application checks it against the latest database state; undo also checks whether restoring the previous sessions is safe.
+The planner uses remaining task effort, deadlines, priorities, dependencies, fixed calendar events, preferred hours, and daily study limits to build feasible study sessions.
 
-See the [mathematical model and safe review guide](docs/GOAL_BASED_OPTIMIZER.md) and [experimental evaluation](docs/OPTIMIZER_EVALUATION.md). The benchmark in `scripts/evaluate_optimizer.py` compares both greedy strategies with all five goals. Install the updated requirements to enable OR-Tools.
+The central engineering feature is **constraint-aware replanning**, rather than the calendar interface itself. We use a bounded **OR-Tools CP-SAT** model with five objective profiles. Each profile makes a different trade-off between urgency, importance, preserving an existing plan, total scheduled work, and workload distribution. A deterministic greedy planner provides a baseline and fallback.
 
-## Run it on Windows
+The optimizer also uses tie-breaking preferences to discourage very short study fragments (under 25 minutes) and excessive movement of existing sessions. These are **soft preferences**: a shorter session can still be proposed when necessary. The stability metric estimates how far preserved sessions move, not just how many are affected.
 
-You'll need **Python 3.12** and **Git**. From PowerShell:
+**Proposals are not applied automatically.** Before approval, the app validates hard constraints and rechecks the current SQLite state so that an outdated preview cannot silently replace newer work. Undo has its own safety checks. A feasible partial plan is possible; meeting every deadline or proving a globally optimal plan is **not guaranteed**.
+
+For more detail, see [the optimizer model](docs/GOAL_BASED_OPTIMIZER.md), [the evaluation](docs/OPTIMIZER_EVALUATION.md), and [the final experience update](docs/FINAL_EXPERIENCE_UPGRADE.md).
+
+## Run on Windows
+
+Install **Python 3.12** and **Git**, then open PowerShell:
 
 ```powershell
 git clone https://github.com/quietbuild-dev/personal-workspace.git
@@ -35,82 +42,82 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
-### Desktop window (recommended on Windows)
+### Desktop window
 
-Run this once to create a **Personal Workspace** shortcut on your desktop:
+Create a desktop shortcut once:
 
 ```powershell
 & ".\Create Desktop Shortcut.bat"
 ```
 
-Then double-click the shortcut. It opens a separate Edge/Chrome application window without a visible terminal. A local Streamlit server still runs in the background and closes with the app window. This is a Windows launcher, **not** a standalone installer or an online service. The project folder and Python environment must remain available.
+Then double-click **Personal Workspace** on your desktop. The Windows launcher uses **pywebview with the Edge WebView2 runtime** to display the app in its own window, without a normal Edge browser profile or extensions. A **local Streamlit server runs in the background** and is stopped when the window closes.
 
-See `docs/DESKTOP_LAUNCHER.md` for details and troubleshooting.
+This is **not** a packaged standalone `.exe`: the project folder, Python virtual environment, and WebView2 runtime are still required. See [desktop setup and troubleshooting](docs/DESKTOP_LAUNCHER.md). The desktop window should be checked on each target Windows installation.
 
-### Run in a browser instead
+### Browser option
+
+You can also run the same app in a regular browser:
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Open the local URL shown in PowerShell (usually `http://localhost:8501`). Keep the terminal running while using the app, and press `Ctrl+C` to stop it.
+Open the local URL shown in PowerShell (usually `http://localhost:8501`). Keep the terminal open; press **Ctrl+C** to stop the server.
 
 ### Sample workspace
+
+To explore the app without changing your own tasks:
 
 ```powershell
 & ".\Launch Calendar V3 Demo.bat"
 ```
 
-Despite the older launcher name, this runs the current interface with sample data, usually at `http://localhost:8503`. It uses a separate demo database (`data/calendar-v3-demo.db`), not your personal `data/workspace.db`. Do not delete or overwrite your personal database when resetting a demo.
+Despite the older launcher filename, this opens the current application using a separate demo database, normally at `http://localhost:8503`. **Do not delete or overwrite `data/workspace.db`** when resetting demo data.
 
-On macOS, the Python/Streamlit application can be run from a virtual environment, but the Windows desktop shortcut is not supported. macOS desktop packaging has not been tested.
+On macOS, the Streamlit application can run in a browser with an appropriate Python environment; the Windows desktop shortcut is not supported.
 
-## Testing
+## Testing and evaluation
 
-On the Windows development setup:
+The latest Windows development run on **November 25, 2026** completed **222 tests and 58 subtests**, with Ruff linting and formatting checks passing.
 
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m scripts.check_ui
+
+$testDir = Join-Path $env:USERPROFILE ("Downloads\pw-tests-" + [guid]::NewGuid().ToString("N"))
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp "$testDir"
+
+.\.venv\Scripts\python.exe -m scripts.check_optimizer_ui
 ```
 
-The optimizer checkpoint passes **210 tests and 58 subtests**, lint, formatting,
-and Home/Calendar smoke checks. `scripts.check_optimizer_ui` also exercises goal
-preview/comparison, approval, Undo and prerequisite editing on temporary data.
-The Windows desktop launcher has not been manually retested for this upgrade.
-
-To reproduce the seven-method comparison on 15 synthetic scenarios:
+To repeat the synthetic comparison of greedy baselines and the five optimizer goals:
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.evaluate_optimizer --repeats 3 --time-limit 1 --csv docs/optimizer-benchmark.csv
+.\.venv\Scripts\python.exe -m scripts.summarize_optimizer_benchmark --csv docs/optimizer-benchmark.csv
 ```
+
+The benchmark measures feasible scheduled work, constraint violations, goal-specific outcomes, and disruption; it does not prove that every optimizer run is optimal. The full results and methodology are described in [`docs/OPTIMIZER_EVALUATION.md`](docs/OPTIMIZER_EVALUATION.md).
 
 ## Project structure
 
 | Path | Purpose |
 | --- | --- |
-| `app.py` | App entry point and navigation |
-| `workspace/theme.py` | Smoky Lavender styling |
-| `workspace/views/home.py` | Home, focus tasks and deadlines |
-| `workspace/views/task_board.py` | Everyday Tasks page |
-| `workspace/views/week.py` | Calendar, preferences, session actions and replanning |
-| `workspace/views/weekly_calendar.py` | Calendar rendering |
-| `workspace/views/schedule_comparison.py` | Before/After schedule comparison |
-| `workspace/advanced_planner.py` | Greedy baseline and independent constraints |
-| `workspace/optimizer.py` | CP-SAT model and five objective profiles |
-| `workspace/dependencies.py` | Dependency graph and precedence validation |
-| `workspace/conflict_analysis.py` | Calculated capacity bounds and suggestions |
-| `workspace/planning_insights.py` | Replanning comparisons and risk summaries |
-| `workspace/advanced_repository.py` | SQLite operations, plan acceptance and undo |
-| `workspace/quick_tasks.py` | Task creation, editing and optional scheduling |
-| `scripts/launch_desktop.py` | Windows desktop-window launcher |
-| `tests/`, `scripts/` | Tests, demos and evaluation |
-
-Additional notes are in `docs/`, especially `RESCUE_MY_WEEK.md`, `FINAL_UI_POLISH.md` and `DESKTOP_LAUNCHER.md`.
+| `app.py` | Application entry point and navigation |
+| `workspace/views/` | Home, task management, calendar, and schedule previews |
+| `workspace/advanced_planner.py` | Greedy scheduling baseline and constraint checks |
+| `workspace/optimizer.py` | CP-SAT model and goal-based scheduling |
+| `workspace/dependencies.py` | Task prerequisites and cycle validation |
+| `workspace/conflict_analysis.py` | Scheduling conflicts and available-capacity analysis |
+| `workspace/schedule_quality.py` | Study-session fragmentation and schedule stability metrics |
+| `workspace/calendar_export.py` | Read-only `.ics` calendar export |
+| `workspace/advanced_repository.py` | SQLite operations, proposal approval, and safe Undo |
+| `scripts/launch_desktop.py` | Windows desktop launcher with embedded WebView2 |
+| `scripts/` and `tests/` | Demos, benchmarks, smoke checks, and automated tests |
+| `docs/` | Technical explanations, evaluation, and launcher instructions |
 
 ## Scope and limitations
 
-This is a **local, single-user course project**. It has no accounts, cloud synchronization, external calendar integration, or guaranteed optimal scheduling. SQLite data stays on the user's computer; personal databases, virtual environments and local secrets should not be committed to Git. The project is shared through GitHub, not through the app itself.
+Personal Workspace is a **local, single-user course project**. It has no accounts, cloud synchronization, collaborative editing, or live external-calendar integration. The scheduling horizon is a week, and the solver may return a feasible partial plan rather than a fully completed or proven-optimal one.
 
+Personal SQLite databases, virtual environments, and local secrets should stay out of Git. Share source code through this repository, not personal database files.
