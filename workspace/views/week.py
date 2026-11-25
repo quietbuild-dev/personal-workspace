@@ -23,7 +23,7 @@ from workspace.advanced_repository import (
 from workspace.manual_planning import move_proposed_block
 from workspace.planning_insights import compare_plans, scenario_unavailable
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
-from workspace.theme import priority_badge, strategy_cards
+from workspace.theme import priority_badge
 from workspace.views.schedule_comparison import (
     before_after_html,
     changed_days,
@@ -386,17 +386,25 @@ def _review(snapshot, now: datetime) -> None:
     with st.container(border=True):
         st.markdown("### Rescue my week")
         st.caption("Review two possible plans. Nothing is changed until you approve one.")
-        strategies = ["Change as little as possible", "Find more time for unfinished work"]
-        selected = (
-            st.segmented_control(
-                "Choose your approach",
-                strategies,
-                default=strategies[0],
-                key="calendar_plan_strategy",
-            )
-            or strategies[0]
+        strategies = ("Change as little as possible", "Find more time for unfinished work")
+        selected = st.session_state.get("calendar_plan_strategy", strategies[0])
+        if selected not in strategies:
+            selected = strategies[0]
+        descriptions = (
+            "Keep the study times that still work.",
+            "Rearrange more of the week to fit work.",
         )
-        st.markdown(strategy_cards(selected), unsafe_allow_html=True)
+        first, second = st.columns(2, gap="medium")
+        for i, column in enumerate((first, second)):
+            with column:
+                active = selected == strategies[i]
+                label = f"{'✓ ' if active else ''}{strategies[i]}\n\n{descriptions[i]}"
+                key = f"pw_strategy_{'selected_' if active else ''}{i}"
+                if st.button(label, key=key, width="stretch", help=descriptions[i]):
+                    st.session_state["calendar_plan_strategy"] = strategies[i]
+                    st.session_state.pop("calendar_adjusted_proposal", None)
+                    st.session_state.pop("calendar_adjusted_strategy", None)
+                    st.rerun()
         if st.session_state.get("calendar_adjusted_strategy") != selected:
             st.session_state.pop("calendar_adjusted_proposal", None)
         assessment = stable if selected == strategies[0] else baseline
@@ -568,7 +576,7 @@ def main() -> None:
     except ValueError:
         anchor_date = now.date()
     st.markdown(
-        '<div class="pw-hero"><div class="pw-eyebrow">Your week, at a glance</div>'
+        '<div class="pw-hero">'
         "<h1>My Calendar</h1>"
         "<p>Lectures, plans, and study time together. Review changes on your terms.</p>"
         "</div>",

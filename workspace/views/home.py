@@ -16,6 +16,7 @@ from workspace.advanced_repository import (
     list_task_due_times,
     set_checklist_done,
 )
+from workspace.home_view_logic import completed_today, due_display, focus_tasks
 from workspace.manual_planning import move_proposed_block
 from workspace.models import TaskDraft
 from workspace.overview import load_overview
@@ -41,21 +42,6 @@ def pretty_duration(minutes: int) -> str:
     if hours:
         return f"{hours}h"
     return f"{remaining}m"
-
-
-def due_display(task, due_times, today: date) -> str:
-    if task.deadline is None:
-        return "No deadline"
-    delta = (task.deadline - today).days
-    label = (
-        "Overdue"
-        if delta < 0
-        else "Today"
-        if delta == 0
-        else ("Tomorrow" if delta == 1 else f"{task.deadline:%d/%m/%Y}")
-    )
-    minute = due_times.get(task.id)
-    return f"Due {label}" + (f" at {format_time(minute)}" if minute is not None else "")
 
 
 def parse_due_clock(value: str) -> int | None:
@@ -338,95 +324,112 @@ def _weekly_workload(overview, today: date) -> str:
     )
 
 
+def _view_task(task_id: int) -> None:
+    """Open the exact task in the shared Tasks page (same browser tab)."""
+    st.session_state["task_board_selected_task"] = task_id
+    st.session_state["open_task_details"] = task_id
+    st.switch_page("workspace/views/task_board.py")
+
+
 def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
-    """Two-column focus and deadline overview; all controls remain lower on Home."""
+    """A day-specific focus list, completed work below, and upcoming deadlines."""
     pending = [task for task in overview.tasks if task.status == "pending"]
     pending.sort(
-        key=lambda task: (
-            task.deadline is None,
-            task.deadline or date.max,
-            -task.priority,
-            task.id,
-        )
+        key=lambda task: (task.deadline is None, task.deadline or date.max, -task.priority, task.id)
     )
     soon = [
         task
         for task in pending
-        if task.deadline is not None and task.deadline <= today + timedelta(days=7)
+        if task.deadline is not None and today <= task.deadline <= today + timedelta(days=7)
     ]
     checklist_by_task = {}
     for step in overview.advanced.steps:
         if step.kind == "checklist":
             checklist_by_task.setdefault(step.task_id, []).append(step)
 
-    focus = [
-        '<div class="pw-card"><h3>Today’s focus</h3>',
-        '<p class="pw-section-note">The work that needs your attention</p>',
-    ]
-    for task in pending[:4]:
-        checklist = checklist_by_task.get(task.id, [])
-        done = sum(item.checked for item in checklist)
-        remaining = pretty_duration(task.remaining_minutes)
-        focus.extend(
-            [
-                '<div class="pw-task-preview"><div class="pw-task-head">',
-                f'<div class="pw-task-title">{escape(task.title)}</div>',
-                priority_badge(task.priority),
-                '</div><div class="pw-task-meta">',
-                f"{escape(task.category)} · "
-                f"{escape(due_display(task, deadline_times, today))} "
-                f"· {remaining} remaining",
-                "</div>",
-            ]
-        )
-        if checklist:
-            percentage = round(100 * done / len(checklist))
-            focus.extend(
-                [
-                    f'<div class="pw-progress" aria-label="{done} of '
-                    f'{len(checklist)} subtasks complete"><span '
-                    f'style="width:{percentage}%"></span></div>',
-                    f'<div class="pw-task-meta">{done} of {len(checklist)} steps complete</div>',
-                ]
-            )
-        focus.append("</div>")
-    if not pending:
-        focus.append('<p class="pw-section-note">Nothing outstanding right now.</p>')
-    focus.append("</div>")
-
-    due = [
-        '<div class="pw-card"><h3>Upcoming deadlines</h3>',
-        '<p class="pw-section-note">The next seven days</p>',
-    ]
-    for task in soon[:4]:
-        due.extend(
-            [
-                '<div class="pw-task-preview"><div class="pw-task-head">',
-                f'<div class="pw-task-title">{escape(task.title)}</div>',
-                priority_badge(task.priority),
-                '</div><div class="pw-task-meta">',
-                escape(due_display(task, deadline_times, today)),
-                "</div></div>",
-            ]
-        )
-    if not soon:
-        due.append('<p class="pw-section-note">No deadlines in the next seven days.</p>')
-    due.append("</div>")
-
     left, right = st.columns([1.18, 0.82], gap="large")
     with left:
-        st.markdown("".join(focus), unsafe_allow_html=True)
-        st.page_link("workspace/views/task_board.py", label="View and update tasks")
+        with st.container(border=True):
+            st.markdown("### Today’s focus")
+            st.caption("Due today, overdue, or on today's study schedule")
+            focused = focus_tasks(overview, today)
+            if not focused:
+                st.caption("No unfinished tasks due or scheduled for today.")
+            for index, task in enumerate(focused):
+                details, action = st.columns([4.4, 1.3], gap="small")
+                with details:
+                    st.markdown(
+                        '<div class="pw-task-head">'
+                        f'<div class="pw-task-title">{escape(task.title)}</div>'
+                        f"{priority_badge(task.priority)}</div>"
+                        '<div class="pw-task-meta">'
+                        f"{escape(task.category)} · "
+                        f"{escape(due_display(task, deadline_times, today))} · "
+                        f"{pretty_duration(task.remaining_minutes)} remaining</div>",
+                        unsafe_allow_html=True,
+                    )
+                    checklist = checklist_by_task.get(task.id, [])
+                    if checklist:
+                        done = sum(item.checked for item in checklist)
+                        percentage = round(100 * done / len(checklist))
+                        st.markdown(
+                            '<div class="pw-progress" '
+                            f'aria-label="{done} of {len(checklist)} steps complete">'
+                            f'<span style="width:{percentage}%"></span></div>'
+                            '<div class="pw-task-meta">'
+                            f"{done} of {len(checklist)} steps complete</div>",
+                            unsafe_allow_html=True,
+                        )
+                with action:
+                    if st.button("View task", key=f"focus_view_{task.id}", width="stretch"):
+                        _view_task(task.id)
+                if index < len(focused) - 1:
+                    st.divider()
+        done_today = completed_today(overview, today)
+        with st.expander(f"Completed today ({len(done_today)})", expanded=False):
+            if done_today:
+                for task in done_today:
+                    st.markdown(f"✓ {escape(task.title)}")
+            else:
+                st.caption("Completed tasks will appear here as you finish them.")
+        st.page_link("workspace/views/task_board.py", label="View all tasks")
     with right:
+        due = [
+            '<div class="pw-card"><h3>Upcoming deadlines</h3>',
+            '<p class="pw-section-note">The next seven days</p>',
+        ]
+        for task in soon[:4]:
+            due.extend(
+                [
+                    '<div class="pw-task-preview"><div class="pw-task-head">',
+                    f'<div class="pw-task-title">{escape(task.title)}</div>',
+                    priority_badge(task.priority),
+                    '</div><div class="pw-task-meta">',
+                    escape(due_display(task, deadline_times, today)),
+                    "</div></div>",
+                ]
+            )
+        if not soon:
+            due.append('<p class="pw-section-note">No deadlines in the next seven days.</p>')
+        due.append("</div>")
         st.markdown("".join(due), unsafe_allow_html=True)
         st.markdown(_weekly_workload(overview, today), unsafe_allow_html=True)
 
 
-def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, ...]) -> None:
+def _task_rows(
+    overview,
+    deadline_times: dict[int, int],
+    categories: tuple[str, ...],
+    *,
+    selected_task_id: int | None = None,
+) -> None:
     st.subheader("Your tasks")
     all_tasks = list(overview.tasks)
-    show_done = st.checkbox("Show completed tasks", value=False, key="home_show_done")
-    displayed = [task for task in all_tasks if show_done or task.status != "completed"]
+    if selected_task_id is not None:
+        displayed = [task for task in all_tasks if task.id == selected_task_id]
+    else:
+        show_done = st.checkbox("Show completed tasks", value=False, key="home_show_done")
+        displayed = [task for task in all_tasks if show_done or task.status != "completed"]
     displayed.sort(
         key=lambda t: (t.status == "completed", t.deadline or date.max, -t.priority, t.id)
     )
@@ -669,7 +672,7 @@ def main() -> None:
         '<div class="pw-hero">'
         f'<div class="pw-eyebrow">{now:%A, %d %B %Y}</div>'
         f"<h1>{greeting}.</h1>"
-        "<p>A calmer view of your tasks, deadlines, and the week ahead.</p>"
+        "<p>A clearer view of your tasks, deadlines, and the week ahead.</p>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -719,7 +722,7 @@ def main() -> None:
     newly_added = st.session_state.get("newly_added_task")
     _suggestion(overview, now, newly_added)
 
-    insight_title = "Your week at a glance"
+    insight_title = "Your study plan"
     insight_description = "Review your saved study sessions or adjust your preferences."
     if not newly_added and (overview.advanced.budgets or overview.advanced.windows):
         insight = compare_plans(overview.advanced, now)

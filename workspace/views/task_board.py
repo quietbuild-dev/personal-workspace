@@ -19,7 +19,6 @@ def main() -> None:
     st.markdown(
         '<div class="pw-hero"><div class="pw-eyebrow">Your workspace</div>'
         "<h1>Tasks & assignments</h1>"
-        "<p>One place to capture work, check off steps, and keep priorities in view.</p>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -59,7 +58,13 @@ def main() -> None:
     _suggestion(overview, now, st.session_state.get("newly_added_task"))
     with st.expander("+ Add a task", expanded=False):
         _new_task(categories)
-    _task_rows(overview, due_times, categories)
+    selected = st.session_state.get("task_board_selected_task")
+    if selected is not None:
+        if st.button("← Back to all tasks", key="task_board_back"):
+            st.session_state.pop("task_board_selected_task", None)
+            st.session_state.pop("open_task_details", None)
+            st.rerun()
+    _task_rows(overview, due_times, categories, selected_task_id=selected)
 
 
 if __name__ == "__main__":

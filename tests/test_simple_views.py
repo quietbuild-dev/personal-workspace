@@ -194,12 +194,29 @@ class SimplePageSmokeTests(unittest.TestCase):
                 for call in self.ui.popover.call_args_list
             )
         )
-        self.assertTrue(
+        # The two actual buttons replace the old selector + non-clickable cards.
+        labels = [call.args[0] for call in self.ui.button.call_args_list]
+        self.assertTrue(any("Change as little as possible" in item for item in labels))
+        self.assertTrue(any("Find more time for unfinished work" in item for item in labels))
+        self.assertFalse(
             any(
                 call.args[0] == "Choose your approach"
                 for call in self.ui.segmented_control.call_args_list
             )
         )
+
+    def test_focus_view_opens_the_exact_task_in_tasks(self):
+        from datetime import date
+
+        from workspace.models import TaskDraft
+        from workspace.quick_tasks import create_quick_task
+
+        chosen = create_quick_task(self.db, TaskDraft("Due today", deadline=date.today()))
+        self.clicks.add("View task")
+        self.run_page("workspace/views/home.py")
+        self.assertEqual(self.ui.session_state["task_board_selected_task"], chosen)
+        self.assertEqual(self.ui.session_state["open_task_details"], chosen)
+        self.ui.switch_page.assert_called_with("workspace/views/task_board.py")
 
     def test_home_done_action_without_opening_editor(self):
         self.inputs["Task name"] = "Laundry"

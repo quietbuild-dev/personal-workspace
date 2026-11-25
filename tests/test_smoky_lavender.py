@@ -14,7 +14,6 @@ from workspace.theme import (
     GLOBAL_CSS,
     priority_badge,
     stat_card,
-    strategy_cards,
 )
 from workspace.views.schedule_comparison import before_after_html
 
@@ -25,7 +24,7 @@ class LavenderThemeTests(unittest.TestCase):
     def test_global_palette_matches_streamlit_configuration(self):
         self.assertEqual(BACKGROUND, "#14141A")
         self.assertEqual(ACCENT, "#BAA9D0")
-        config = (ROOT / ".streamlit/config.toml").read_text()
+        config = (ROOT / ".streamlit/config.toml").read_text(encoding="utf-8")
         for color in ("#14141A", "#22222B", "#BAA9D0", "#F1EEF5"):
             self.assertIn(color, config)
             self.assertIn(color, GLOBAL_CSS)
@@ -43,16 +42,17 @@ class LavenderThemeTests(unittest.TestCase):
         self.assertNotIn(label, html)
         self.assertIn("&lt;tasks&gt;", html)
 
-    def test_strategy_cards_explain_both_options_and_selected_state(self):
-        html = strategy_cards("Change as little as possible")
-        self.assertIn("Change as little as possible", html)
-        self.assertIn("Find more time for unfinished work", html)
-        self.assertEqual(html.count("pw-strategy--active"), 1)
+    def test_strategy_buttons_have_one_active_visual_state(self):
+        self.assertIn("st-key-pw_strategy_selected_0", GLOBAL_CSS)
+        self.assertIn("st-key-pw_strategy_selected_1", GLOBAL_CSS)
+        week = (ROOT / "workspace/views/week.py").read_text(encoding="utf-8")
+        self.assertNotIn('"Choose your approach", strategies', week)
+        self.assertNotIn("strategy_cards(selected)", week)
 
     def test_saved_calendar_retains_click_targets_with_new_colors(self):
         today = date(2026, 11, 25)
         self.assertEqual(today.year, 2026)
-        calendar_source = (ROOT / "workspace/views/weekly_calendar.py").read_text()
+        calendar_source = (ROOT / "workspace/views/weekly_calendar.py").read_text(encoding="utf-8")
         self.assertIn("CALENDAR_CSS", calendar_source)
         self.assertIn("wp-block wp-{kind}", calendar_source)
         self.assertIn("#655875", CALENDAR_CSS)
@@ -69,7 +69,7 @@ class LavenderThemeTests(unittest.TestCase):
         self.assertEqual(before[0].start, 540)
 
     def test_main_navigation_includes_access_to_legacy_advanced_views(self):
-        app = (ROOT / "app.py").read_text()
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
         for route in (
             "workspace/views/home.py",
             "workspace/views/week.py",

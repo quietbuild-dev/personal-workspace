@@ -109,6 +109,29 @@ html, body, .stApp, [data-testid="stAppViewContainer"],
 [data-baseweb="select"] > div:focus-within {
     border-color:#BAA9D0!important;
 }
+/* Each Rescue strategy is one keyboard-accessible clickable surface. */
+.st-key-pw_strategy_0 button, .st-key-pw_strategy_1 button,
+.st-key-pw_strategy_selected_0 button, .st-key-pw_strategy_selected_1 button {
+    width:100%!important;min-height:107px!important;text-align:left!important;
+    justify-content:flex-start!important;align-items:center!important;
+    background:#22222B!important;border:1px solid #514A60!important;
+    padding:18px 20px!important;white-space:pre-line!important;
+    font-size:.9rem!important;line-height:1.6!important;
+}
+.st-key-pw_strategy_0 button p, .st-key-pw_strategy_1 button p,
+.st-key-pw_strategy_selected_0 button p,
+.st-key-pw_strategy_selected_1 button p {
+    text-align:left!important;white-space:pre-line!important;
+}
+.st-key-pw_strategy_selected_0 button,
+.st-key-pw_strategy_selected_1 button {
+    background:#302A3A!important;border:2px solid #BAA9D0!important;
+}
+.st-key-pw_strategy_0 button:hover, .st-key-pw_strategy_1 button:hover,
+.st-key-pw_strategy_selected_0 button:hover,
+.st-key-pw_strategy_selected_1 button:hover {
+    border-color:#BAA9D0!important;background:#373140!important;
+}
 [data-testid="stSegmentedControl"] {background:#22222B;border-radius:12px;}
 [data-testid="stMarkdownContainer"] h1 {font-size:2.05rem;letter-spacing:-.045em;}
 [data-testid="stMarkdownContainer"] h2 {font-size:1.52rem;letter-spacing:-.03em;}
@@ -164,13 +187,6 @@ hr {border-color:#393640!important;}
     border-radius:13px;margin:10px 0 13px;}
 .pw-insight strong {display:block;color:#F1EEF5;font-size:.92rem;margin-bottom:4px;}
 .pw-insight p {color:#BDB7C9;font-size:.83rem;line-height:1.55;margin:0;}
-.pw-strategy-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:12px;margin:12px 0 14px;}
-.pw-strategy {border:1px solid #393640;background:#22222B;
-    border-radius:13px;padding:15px 17px;min-width:0;}
-.pw-strategy--active {border-color:#BAA9D0;background:#302A3A;}
-.pw-strategy-name {font-size:.89rem;font-weight:720;color:#F1EEF5;}
-.pw-strategy-desc {margin-top:6px;font-size:.78rem;color:#A8A4B3;line-height:1.5;}
 .pw-review-stats {display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 16px;}
 .pw-review-stat {background:#2C2A36;border:1px solid #393640;
     padding:10px 14px;border-radius:10px;flex:1;min-width:120px;}
@@ -184,7 +200,6 @@ hr {border-color:#393640!important;}
   .pw-hero h1 {font-size:1.85rem;}
   .pw-stat {min-height:112px;padding:15px;}
   .pw-stat-value {font-size:1.75rem;}
-  .pw-strategy-grid {grid-template-columns:1fr;}
   [data-testid="stMainBlockContainer"],.block-container {padding-top:1.15rem!important;}
 }
 @media(prefers-reduced-motion:reduce) {
@@ -307,19 +322,3 @@ def insight_card(title: str, explanation: str) -> str:
         '<div class="pw-insight">'
         f"<strong>{escape(title)}</strong><p>{escape(explanation)}</p></div>"
     )
-
-
-def strategy_cards(selected: str) -> str:
-    strategies = (
-        ("Change as little as possible", "Keep the study times that still work."),
-        ("Find more time for unfinished work", "Rearrange more of the week to fit work."),
-    )
-    cards = []
-    for title, description in strategies:
-        active = " pw-strategy--active" if selected == title else ""
-        cards.append(
-            f'<div class="pw-strategy{active}">'
-            f'<div class="pw-strategy-name">{escape(title)}</div>'
-            f'<div class="pw-strategy-desc">{escape(description)}</div></div>'
-        )
-    return '<div class="pw-strategy-grid">' + "".join(cards) + "</div>"

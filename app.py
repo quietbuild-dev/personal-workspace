@@ -6,7 +6,7 @@ from workspace.theme import apply_theme
 
 st.set_page_config(
     page_title="Personal Workspace",
-    page_icon=":material/auto_awesome:",
+    page_icon=":material/event_available:",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -25,12 +25,12 @@ page = st.navigation(
         "Advanced": [
             st.Page(
                 "workspace/views/tasks.py",
-                title="Detailed task & step editor",
+                title="Detailed Task Editor",
                 icon=":material/tune:",
             ),
             st.Page(
                 "workspace/views/planner.py",
-                title="Legacy planning controls",
+                title="Advanced Planning",
                 icon=":material/settings:",
             ),
         ],
