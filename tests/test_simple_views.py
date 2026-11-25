@@ -39,6 +39,7 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.ui.rerun.side_effect = FakeRerun()
         self.ui.stop.side_effect = AssertionError("Page stopped")
         self.ui.text_input.side_effect = lambda label, value="", **_: self.inputs.get(label, value)
+        self.ui.text_area.side_effect = lambda label, value="", **_: self.inputs.get(label, value)
         self.ui.number_input.side_effect = lambda label, value=0, **_: self.inputs.get(label, value)
         self.ui.date_input.side_effect = lambda label, value=None, **_: self.inputs.get(
             label, value

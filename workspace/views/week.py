@@ -21,6 +21,7 @@ from workspace.advanced_repository import (
     update_fixed_event,
 )
 from workspace.conflict_analysis import analyze_conflicts
+from workspace.calendar_export import build_calendar_ics
 from workspace.manual_planning import move_proposed_block
 from workspace.planning_insights import (
     assess_proposal,
@@ -651,6 +652,32 @@ def main() -> None:
     with nav_today:
         st.button("Today", key="calendar_today", on_click=jump_to_today)
     selected_week_start, selected_week_end = week_bounds(date_to_view)
+    plan_actions, export_actions = st.columns([1, 1], gap="small")
+    with plan_actions:
+        # Callback runs before widgets are instantiated on the next rerun.
+        # Modifying calendar_browse_date directly after st.date_input would fail.
+        def start_plan():
+            st.session_state["start_week_plan"] = True
+            st.session_state["calendar_browse_date"] = now.date()
+
+        st.button(
+            "Plan my week",
+            key="calendar_plan_week",
+            type="primary",
+            on_click=start_plan,
+        )
+    with export_actions:
+        with st.popover("Export calendar"):
+            st.caption("Download your accepted study blocks and fixed events, not draft plans.")
+            st.download_button(
+                "Download this week (.ics)",
+                data=build_calendar_ics(
+                    snapshot, start_day=selected_week_start, end_day=selected_week_end
+                ),
+                file_name=f"personal-workspace-{selected_week_start.isoformat()}.ics",
+                mime="text/calendar",
+                key="download_week_ics",
+            )
     plan_day = max(date_to_view, now.date())
     plan_sunday = week_bounds(plan_day)[1]
     left, right = st.columns([1, 1], gap="small")
@@ -669,7 +696,10 @@ def main() -> None:
     # Keep urgent schedule repairs above the calendar so they are not buried
     # beneath a full-height timetable. Normal weeks remain calendar-first.
     if selected_week_start == monday:
-        with st.expander("Rescue my week · Review suggested changes", expanded=bool(issues)):
+        with st.expander(
+            "Rescue my week · Review suggested changes",
+            expanded=bool(issues) or bool(st.session_state.get("start_week_plan")),
+        ):
             _review(snapshot, now)
     if view == "Week":
         start_day, end_day = selected_week_start, selected_week_end

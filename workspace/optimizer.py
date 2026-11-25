@@ -18,6 +18,8 @@ from workspace.advanced_planner import (
     week_bounds,
 )
 
+MIN_PREFERRED_SESSION_MINUTES = 25
+
 GOALS = {
     "deadlines": "Meet my deadlines",
     "important": "Focus on important tasks",
@@ -230,15 +232,43 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
     importance = sum(r[6] * {1: 1, 2: 3, 3: 9}[r[0].priority] for r in records)
     keep_count = sum(p for _, p in preserved)
     fragments = sum(r[7] for r in records)
+    # These are soft preferences, never feasibility constraints. Short study
+    # blocks remain possible for genuinely short tasks or small free gaps.
+    tiny_blocks = []
+    move_distances = []
+    prior_by_step = {}
+    for previous in saved:
+        prior_by_step.setdefault(previous.step_id, []).append(
+            (previous.day - monday).days * 1440 + previous.start
+        )
+    for index, r in enumerate(records):
+        if r[0].remaining_minutes >= MIN_PREFERRED_SESSION_MINUTES:
+            tiny = model.new_bool_var(f"tiny_{index}")
+            model.add(r[6] <= MIN_PREFERRED_SESSION_MINUTES - 1).only_enforce_if([r[7], tiny])
+            model.add(r[6] >= MIN_PREFERRED_SESSION_MINUTES).only_enforce_if([r[7], tiny.Not()])
+            model.add(tiny == 0).only_enforce_if(r[7].Not())
+            tiny_blocks.append(tiny)
+        previous_starts = prior_by_step.get(r[0].id, ())
+        if previous_starts:
+            candidate_start = (r[1] - monday).days * 1440 + r[2]
+            nearest = min(previous_starts, key=lambda old: abs(old - candidate_start))
+            move = model.new_int_var(0, 10080, f"shift_{index}")
+            model.add(move >= (r[1] - monday).days * 1440 + r[4] - nearest).only_enforce_if(r[7])
+            model.add(move >= nearest - ((r[1] - monday).days * 1440 + r[4])).only_enforce_if(r[7])
+            model.add(move == 0).only_enforce_if(r[7].Not())
+            move_distances.append(move)
+    # Routine rewards exact preservation first, total scheduled work second,
+    # and nearby changes over changes to a different day only on a tie.
+    quality = -(sum(move_distances) + 25 * fragments + 35 * sum(tiny_blocks))
     peak = model.new_int_var(0, max([1440, *completed.values()]), "peak")
     model.add_max_equality(peak, loads)
     # Three sequential maximizations avoid arbitrary cross-unit weight scales.
     objectives = {
-        "deadlines": (due, total, keep_count * (len(records) + 1) - fragments),
-        "important": (importance, total, keep_count * (len(records) + 1) - fragments),
-        "routine": (keep_count, total, -fragments),
-        "throughput": (total, keep_count, -fragments),
-        "balance": (total, -peak, -fragments),
+        "deadlines": (due, total, quality),
+        "important": (importance, total, quality),
+        "routine": (keep_count, total, quality),
+        "throughput": (total, keep_count, quality),
+        "balance": (total, -peak, quality),
     }[goal]
     # Seed the search with a feasible plan, split at the same segment boundaries.
     for r in records:
@@ -365,12 +395,16 @@ def _score(snapshot, proposal, now, goal, segments, record_count):
     for slot in proposal.slots:
         loads[slot.day] = loads.get(slot.day, 0) + slot.minutes
     total, keep = proposal.planned_minutes, proposal.unchanged
+    from workspace.schedule_quality import shift_distance_minutes
+
+    short = sum(s.minutes < MIN_PREFERRED_SESSION_MINUTES for s in proposal.slots)
+    quality = -(shift_distance_minutes(snapshot, proposal) + 25 * fragments + 35 * short)
     return {
-        "deadlines": (due, total, keep * (record_count + 1) - fragments),
-        "important": (importance, total, keep * (record_count + 1) - fragments),
-        "routine": (keep, total, -fragments),
-        "throughput": (total, keep, -fragments),
-        "balance": (total, -max(loads.values(), default=0), -fragments),
+        "deadlines": (due, total, quality),
+        "important": (importance, total, quality),
+        "routine": (keep, total, quality),
+        "throughput": (total, keep, quality),
+        "balance": (total, -max(loads.values(), default=0), quality),
     }[goal]
 
 

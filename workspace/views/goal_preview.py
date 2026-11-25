@@ -5,6 +5,7 @@ import streamlit as st
 from workspace.advanced_planner import validate_revision
 from workspace.optimizer import GOAL_NOTES, GOALS, optimize
 from workspace.planning_insights import schedule_metrics
+from workspace.schedule_quality import describe_goal_tradeoff
 
 
 def choose_goal_preview(snapshot, now, reschedule_id):
@@ -22,6 +23,9 @@ def choose_goal_preview(snapshot, now, reschedule_id):
     # The first preview is deliberate. Afterwards switching goals immediately
     # refreshes the suggestion, using the same snapshot and a cached result.
     refresh = st.button("Preview schedule", key="generate_goal_preview", type="primary")
+    # Home and Calendar's one-click entry use the same safe preview path.
+    # The navigation flag is consumed once and never approves a plan.
+    refresh = refresh or bool(st.session_state.pop("start_week_plan", False))
     if refresh:
         cache = (identity, now, {})
         st.session_state["goal_previews"] = cache
@@ -51,6 +55,10 @@ def choose_goal_preview(snapshot, now, reschedule_id):
                         snapshot, cache[1], goal=goal, reschedule_session_id=reschedule_id
                     )
         if len(cache[2]) > 1:
+            if selected != "routine" and "routine" in cache[2]:
+                chosen_metrics = schedule_metrics(snapshot, result.revision, cache[1])
+                routine_metrics = schedule_metrics(snapshot, cache[2]["routine"].revision, cache[1])
+                st.caption(describe_goal_tradeoff(chosen_metrics, routine_metrics))
             rows = []
             for goal, alternative in cache[2].items():
                 metrics = schedule_metrics(snapshot, alternative.revision, cache[1])
@@ -62,7 +70,7 @@ def choose_goal_preview(snapshot, now, reschedule_id):
                         "Existing blocks changed": metrics["moved_or_removed_sessions"],
                     }
                 )
-            st.dataframe(rows, hide_index=True, use_container_width=True)
+            st.dataframe(rows, hide_index=True, width="stretch")
             st.caption(
                 "Percentages measure reserved study time, not completed assignments. "
                 "Choose a goal above to inspect its calendar."
