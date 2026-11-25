@@ -100,6 +100,7 @@ def schedule_metrics(snapshot: PlannerSnapshot, revision: RevisionProposal, now:
     from statistics import pstdev
 
     from workspace.advanced_planner import _already_done_minutes, hourly_workload
+    from workspace.schedule_quality import shift_distance_minutes
 
     steps = {s.id: s for s in snapshot.steps if s.kind == "timed" and not s.parent_completed}
     high_need = sum(s.remaining_minutes for s in steps.values() if s.priority == 3)
@@ -164,6 +165,7 @@ def schedule_metrics(snapshot: PlannerSnapshot, revision: RevisionProposal, now:
         "peak_day_minutes": max(loads.values(), default=0),
         "session_count": len(revision.slots),
         "short_sessions": sum(s.minutes < 25 for s in revision.slots),
+        "session_shift_minutes": shift_distance_minutes(snapshot, revision),
     }
 
 

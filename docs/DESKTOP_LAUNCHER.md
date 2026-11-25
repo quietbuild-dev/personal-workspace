@@ -1,37 +1,48 @@
-# Personal Workspace: standalone desktop window (Windows)
+# Personal Workspace: Windows desktop window
 
-This launcher keeps the existing Streamlit application and SQLite data intact.
-Instead of opening a normal browser tab, it starts the local server with no
-visible terminal and launches Microsoft Edge (or Chrome) in application mode.
-The browser window has no normal address bar or tabs.
+The Windows launcher displays Personal Workspace inside an embedded WebView2
+window instead of opening Microsoft Edge or Google Chrome. There are no browser
+tabs, extension setup pages, browser sign-ins, or visible PowerShell window.
+The Python/Streamlit code, SQLite storage, scheduling and Undo logic are unchanged.
 
-## Set up
+## Installation
 
-From the project folder, run `Create Desktop Shortcut.bat` once. It updates
-`Personal Workspace.lnk` on your Windows desktop to use the new launcher.
-No administrator permissions or new Python packages are required.
+On Windows, from the project folder:
 
-Double-click **Personal Workspace** on the desktop. The launcher starts a
-private loopback Streamlit server, waits until it is healthy, and then opens
-an independent Edge/Chrome application window. Close that window to request
-shutdown of the corresponding local server process. A fresh browser profile
-is used for that window so the user's other browser windows do not interfere.
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+& ".\Create Desktop Shortcut.bat"
+```
 
-The server is still required under the hood; it is simply hidden from the UI.
-This is not a packaged installer or a cloud-hosted application. It works only
-while your Windows PC is running. The `.venv` and installed browser must still
-be available, and the project directory must remain in its current location.
+Double-click **Personal Workspace** on your desktop. It uses the existing
+Windows shortcut and `.vbs` launcher; you do not need to recreate a shortcut
+when only `scripts/launch_desktop.py` has changed.
+
+## How it works
+
+The launcher starts a private Streamlit server bound only to `127.0.0.1` on a
+random free port; it waits for the server, then opens a native `pywebview`
+window using Windows WebView2 (Chromium). No Microsoft account or internet
+connection is required to use the local project. The app still needs its
+server **while the window is open**, but it is a background process and stops
+when the window closes. It does not run 24/7.
+
+This is a local desktop wrapper, **not** a bundled `.exe` installer: the
+project folder, Python `.venv`, and dependencies must still be present.
+The Windows machine must have the Microsoft Edge **WebView2 Runtime** and a
+compatible .NET runtime installed. These components do **not** use the normal
+Edge browser profile or its extensions. Windows 11 often includes WebView2;
+if missing, install the official Microsoft WebView2 Runtime.
 
 ## Troubleshooting
 
-* If there is no desktop icon, run `Create Desktop Shortcut.bat` again.
-* If the app does not open, check `%LOCALAPPDATA%\PersonalWorkspace\desktop-server.log`.
-* The launcher deliberately removes `WORKSPACE_DB_PATH` from its child process
-  environment, so it always uses the normal personal DB, not the demo DB.
-* The separate `Launch Calendar V3 Demo.bat` remains unchanged and continues
-  to use the demo database and an ordinary browser tab.
-* If the app window closes unexpectedly, the local server is terminated.
-* If Windows Edge/Chrome processes do not close with the standalone window,
-  Windows may keep the server open. Check Task Manager if necessary.
-
-All original app code, databases, and tests remain unchanged by this patch.
+- If the window fails to open, read
+  `%LOCALAPPDATA%\PersonalWorkspace\desktop-server.log`.
+- If you see a WebView2/.NET error, install the relevant runtime from Microsoft.
+- If `No module named 'webview'` appears, install the project's requirements.
+- You can always run the same application in an ordinary browser using
+  `.\.venv\Scripts\python.exe -m streamlit run app.py`.
+- The launcher clears `WORKSPACE_DB_PATH` so it opens your **personal** database,
+  never the temporary demo database. Do not test destructive actions using
+  this shortcut; use a separate demo process for exploratory tests.
+- Neither the Windows desktop shortcut nor this launcher should be run on macOS.

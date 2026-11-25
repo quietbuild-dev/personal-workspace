@@ -1,4 +1,4 @@
-"""Launch the local Streamlit app in a standalone Chromium window on Windows.
+"""Launch Streamlit inside a native Windows WebView2 desktop window.
 
 Only the launch mechanism changes. All app data and planning code remain untouched.
 """
@@ -22,25 +22,28 @@ LOCAL_FILES = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "P
 LOG_PATH = LOCAL_FILES / "desktop-server.log"
 
 
-def _find_browser() -> Path:
-    """Locate a Chromium browser without assuming it is on PATH."""
-    roots = [
-        Path(os.environ.get("PROGRAMFILES(X86)") or "C:/Program Files (x86)"),
-        Path(os.environ.get("PROGRAMFILES") or "C:/Program Files"),
-        Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()),
-    ]
-    candidates = [
-        root / rel
-        for rel in (
-            "Microsoft/Edge/Application/msedge.exe",
-            "Google/Chrome/Application/chrome.exe",
-        )
-        for root in roots
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError("Microsoft Edge or Google Chrome was not found on this computer.")
+def _open_embedded_window(url: str) -> None:
+    """Display Streamlit without launching Edge or sharing its extensions/profile."""
+    try:
+        import webview
+    except ImportError as exc:
+        raise RuntimeError(
+            "The desktop window component is missing. From the project folder run:\n"
+            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements-dev.txt"
+        ) from exc
+
+    webview.create_window(
+        "Personal Workspace",
+        url=url,
+        width=1280,
+        height=820,
+        min_size=(850, 560),
+        background_color="#14141A",
+        text_select=True,
+    )
+    # The GUI event loop exits when the app window closes. Do not silently
+    # fall back to legacy Internet Explorer or a regular Edge browser.
+    webview.start(gui="edgechromium", debug=False, private_mode=True)
 
 
 def _free_local_port() -> int:
@@ -80,7 +83,6 @@ def launch() -> None:
             "instructions in README.md first."
         )
 
-    browser_exe = _find_browser()
     LOCAL_FILES.mkdir(parents=True, exist_ok=True)
     port = _free_local_port()
     url = f"http://127.0.0.1:{port}"
@@ -118,28 +120,9 @@ def launch() -> None:
             )
             _wait_until_ready(server, port)
 
-            # An isolated ephemeral browser profile keeps the app's process
-            # independent of the user's regular Edge/Chrome tabs. It also
-            # allows the server to stop when this window is closed.
-            with tempfile.TemporaryDirectory(
-                prefix="personal-workspace-", ignore_cleanup_errors=True
-            ) as profile:
-                browser = subprocess.Popen(
-                    [
-                        str(browser_exe),
-                        f"--app={url}",
-                        f"--user-data-dir={profile}",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                        "--disable-background-mode",
-                    ],
-                    cwd=PROJECT,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                browser.wait()
+            # Embedded WebView2 has its own app window. The user's normal
+            # Edge profile, extension onboarding, and sign-in are not involved.
+            _open_embedded_window(url)
         finally:
             if server is not None and server.poll() is None:
                 server.terminate()

@@ -30,6 +30,7 @@ from workspace.quick_tasks import (
 )
 from workspace.repository import DEFAULT_DB_PATH, delete_task
 from workspace.simple_planning import proposal_notice
+from workspace.subtask_input import parse_subtasks
 from workspace.theme import insight_card, priority_badge, stat_card
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
@@ -148,16 +149,26 @@ def _new_task(categories: tuple[str, ...]) -> None:
                 value=True,
                 help="Uncheck for errands or tasks you don't want to schedule.",
             )
+            subtasks = st.text_area(
+                "Subtasks (optional)",
+                placeholder="e.g. Find sources\nWrite first draft\nCheck references",
+                help="One item per line. You can add or check them off later.",
+                key=f"new_subtasks_{rev}",
+                height=85,
+            )
             submitted = st.form_submit_button("Save task", type="primary")
         if submitted:
 
             def save():
+                lines = parse_subtasks(subtasks)
                 new_id = create_quick_task(
                     DEFAULT_DB_PATH,
                     TaskDraft(title, category, due, PRIORITIES[priority], estimate),
                     due_minute=parse_due_clock(due_time),
                     schedule=schedule,
                 )
+                for line in lines:
+                    add_step(DEFAULT_DB_PATH, new_id, line, "checklist")
                 st.session_state["newly_added_task"] = new_id if schedule else None
                 st.session_state["new_task_version"] = rev + 1
                 st.session_state.pop("home_adjusted_proposal", None)
@@ -611,12 +622,20 @@ def _edit_task(overview, categories, deadline_times) -> None:
                 )
         if task.status == "pending":
             with st.form(f"new_check_{task.id}", clear_on_submit=True):
-                label = st.text_input("New checklist item")
-                if st.form_submit_button("Add checklist item"):
-                    _apply(
-                        lambda: add_step(DEFAULT_DB_PATH, task.id, label, "checklist"),
-                        "Checklist item added.",
-                    )
+                labels = st.text_area(
+                    "Add subtasks",
+                    placeholder="One per line",
+                    height=76,
+                    key=f"add_subtasks_{task.id}",
+                )
+                if st.form_submit_button("Add subtasks"):
+
+                    def save_subtasks():
+                        lines = parse_subtasks(labels, required=True)
+                        for line in lines:
+                            add_step(DEFAULT_DB_PATH, task.id, line, "checklist")
+
+                    _apply(save_subtasks, "Subtasks added.")
         with st.expander("Edit task details", expanded=False):
             rev = st.session_state.get("edit_task_rev", 0)
             category = _category_input(categories, f"edit_{task.id}_{rev}", selected=task.category)
@@ -772,7 +791,10 @@ def main() -> None:
             insight_description = "No significant schedule changes are currently suggested."
     st.markdown("<h3>Planning insight</h3>", unsafe_allow_html=True)
     st.markdown(insight_card(insight_title, insight_description), unsafe_allow_html=True)
-    st.page_link("workspace/views/week.py", label="Open calendar & planner")
+    if st.button("Plan my week", key="home_plan_week", type="primary"):
+        st.session_state["start_week_plan"] = True
+        st.switch_page("workspace/views/week.py")
+    st.page_link("workspace/views/week.py", label="Open calendar")
 
     with st.expander("Today's schedule", expanded=False):
         _today(overview, now)
