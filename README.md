@@ -1,4 +1,4 @@
-# Personal Workspace
+﻿# Personal Workspace
 
 Personal Workspace is a local study planner built for Bocconi's Software Engineering course (20875). We wanted a way to turn a list of deadlines into an actual plan for the week, without having to rearrange every study session by hand when something changes.
 
@@ -76,7 +76,7 @@ On the Windows development setup:
 .\.venv\Scripts\python.exe -m scripts.check_ui
 ```
 
-The optimizer checkpoint passes **209 tests and 58 subtests**, lint, formatting,
+The optimizer checkpoint passes **210 tests and 58 subtests**, lint, formatting,
 and Home/Calendar smoke checks. `scripts.check_optimizer_ui` also exercises goal
 preview/comparison, approval, Undo and prerequisite editing on temporary data.
 The Windows desktop launcher has not been manually retested for this upgrade.
@@ -113,3 +113,4 @@ Additional notes are in `docs/`, especially `RESCUE_MY_WEEK.md`, `FINAL_UI_POLIS
 ## Scope and limitations
 
 This is a **local, single-user course project**. It has no accounts, cloud synchronization, external calendar integration, or guaranteed optimal scheduling. SQLite data stays on the user's computer; personal databases, virtual environments and local secrets should not be committed to Git. The project is shared through GitHub, not through the app itself.
+
