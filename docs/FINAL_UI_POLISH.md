@@ -73,7 +73,7 @@ No database is included in the ZIP.
    Rescue My Week:
 
    ```powershell
-   & ".\Launch Calendar V3 Demo.bat"
+   & ".\Launch Sample Workspace.bat"
    ```
 
    It normally opens `http://localhost:8503`.

@@ -35,7 +35,7 @@ The source ZIP includes an independent local HTML preview at
 without Streamlit. It's **read-only** and uses precomputed sample schedules.
 
 For the actual working Streamlit example:
-1. Run the included `Launch Calendar V3 Demo.bat` from the project folder.
+1. Run the included `Launch Sample Workspace.bat` from the project folder.
 2. On first launch it creates `data/calendar-v3-demo.db` using the current date.
 3. Visit http://localhost:8503 and inspect Home, My Calendar, and Rescue My Week.
 4. Accept a real plan or edit an event, then restart and verify it persists.

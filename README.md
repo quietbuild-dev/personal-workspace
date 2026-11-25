@@ -69,7 +69,7 @@ Open the local URL shown in PowerShell (usually `http://localhost:8501`). Keep t
 To explore the app without changing your own tasks:
 
 ```powershell
-& ".\Launch Calendar V3 Demo.bat"
+& ".\Launch Sample Workspace.bat"
 ```
 
 Despite the older launcher filename, this opens the current application using a separate demo database, normally at `http://localhost:8503`. **Do not delete or overwrite `data/workspace.db`** when resetting demo data.

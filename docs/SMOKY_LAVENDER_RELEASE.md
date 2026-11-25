@@ -84,7 +84,7 @@ Run the app normally:
 Or test with a separate sample database:
 
 ```powershell
-& ".\Launch Calendar V3 Demo.bat"
+& ".\Launch Sample Workspace.bat"
 ```
 
 The old demo launcher name remains unchanged. The browser address is normally

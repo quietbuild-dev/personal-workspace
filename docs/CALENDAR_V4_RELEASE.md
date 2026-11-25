@@ -43,6 +43,6 @@ Priority badges and the background type color are separate dimensions; the entir
 .\.venv\Scripts\python.exe -m scripts.check_ui
 ```
 
-Open a separate demo with `& ".\Launch Calendar V3 Demo.bat"` (the name of the old launcher is unchanged; source files are V4). Verify: task creation with and without study scheduling; priority badges; changing tasks and checking subtasks; calendar date arrows and current-day reset; editing one block in the same tab; viewing Before/After; accepting and undoing a conflict-free plan; intentionally adding a lecture and checking undo is safely refused.
+Open a separate demo with `& ".\Launch Sample Workspace.bat"` (the name of the old launcher is unchanged; source files are V4). Verify: task creation with and without study scheduling; priority badges; changing tasks and checking subtasks; calendar date arrows and current-day reset; editing one block in the same tab; viewing Before/After; accepting and undoing a conflict-free plan; intentionally adding a lecture and checking undo is safely refused.
 
 The demo runs on an isolated database at `data/calendar-v3-demo.db`, not `data/workspace.db`. Do **not** copy its DB over personal data. The ZIP contains no database, `.venv`, or `.git` folders.
