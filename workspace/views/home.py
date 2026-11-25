@@ -16,6 +16,7 @@ from workspace.advanced_repository import (
     list_task_due_times,
     set_checklist_done,
 )
+from workspace.deadline_guarantees import check_required_coverage
 from workspace.home_view_logic import completed_today, due_display, focus_tasks
 from workspace.manual_planning import move_proposed_block
 from workspace.models import TaskDraft
@@ -30,8 +31,15 @@ from workspace.quick_tasks import (
 )
 from workspace.repository import DEFAULT_DB_PATH, delete_task
 from workspace.simple_planning import proposal_notice
+from workspace.study_dna import (
+    load_study_dna,
+    required_task_ids,
+    set_required,
+    task_is_required,
+)
 from workspace.subtask_input import parse_subtasks
 from workspace.theme import insight_card, priority_badge, stat_card
+from workspace.views.settings import render_form
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -149,6 +157,11 @@ def _new_task(categories: tuple[str, ...]) -> None:
                 value=True,
                 help="Uncheck for errands or tasks you don't want to schedule.",
             )
+            must_finish = st.checkbox(
+                "Must finish by deadline",
+                value=True,
+                help="Leave checked for exams or submissions. Uncheck for optional work.",
+            )
             subtasks = st.text_area(
                 "Subtasks (optional)",
                 placeholder="e.g. Find sources\nWrite first draft\nCheck references",
@@ -167,6 +180,8 @@ def _new_task(categories: tuple[str, ...]) -> None:
                     due_minute=parse_due_clock(due_time),
                     schedule=schedule,
                 )
+                if due is not None:
+                    set_required(DEFAULT_DB_PATH, new_id, bool(must_finish))
                 for line in lines:
                     add_step(DEFAULT_DB_PATH, new_id, line, "checklist")
                 st.session_state["newly_added_task"] = new_id if schedule else None
@@ -302,6 +317,43 @@ def _today(overview, now: datetime) -> None:
 def _priority_badge(priority: int) -> str:
     """Retain the V4 helper while sharing the palette with the calendar."""
     return priority_badge(priority)
+
+
+def _personalized_nudge(overview, today: date, profile) -> str | None:
+    """One short observation based on saved sessions, not invented AI predictions."""
+    _, sunday = week_bounds(today)
+    sessions = [
+        item
+        for item in overview.advanced.sessions
+        if item.status == "planned" and today <= item.day <= sunday
+    ]
+    if not sessions:
+        return (
+            "Your tasks are ready, but this week's calendar has no accepted study blocks. "
+            "Plan my week can help you find a starting point."
+            if any(t.status == "pending" for t in overview.tasks)
+            else None
+        )
+    if profile is not None and profile.focus_window is not None:
+        lo, hi = profile.focus_window
+        total = sum(item.end - item.start for item in sessions)
+        preferred = sum(max(0, min(item.end, hi) - max(item.start, lo)) for item in sessions)
+        if total >= 90 and preferred * 3 < total:
+            return (
+                "Most upcoming study time falls outside your strongest concentration hours. "
+                "A new preview can look for a closer fit around your commitments."
+            )
+    by_day = {}
+    for item in sessions:
+        by_day[item.day] = by_day.get(item.day, 0) + item.end - item.start
+    busiest = max(by_day, key=by_day.get)
+    if by_day[busiest] >= 240 and by_day[busiest] * 2 > sum(by_day.values()):
+        return (
+            f"{busiest:%A} is doing the heavy lifting: "
+            f"{pretty_duration(by_day[busiest])} booked. "
+            "The balanced plan could spread that load if other days have room."
+        )
+    return None
 
 
 def _weekly_workload(overview, today: date) -> str:
@@ -681,6 +733,11 @@ def _edit_task(overview, categories, deadline_times) -> None:
                             sum(timed_remaining) if timed_remaining else task.remaining_minutes
                         ),
                     )
+                must_finish = st.checkbox(
+                    "Must finish by deadline",
+                    value=task_is_required(DEFAULT_DB_PATH, task) or task.deadline is None,
+                    help="Required work is protected in Plan A vs Plan B comparisons.",
+                )
                 if st.form_submit_button("Save changes", type="primary"):
 
                     def save():
@@ -690,6 +747,9 @@ def _edit_task(overview, categories, deadline_times) -> None:
                             TaskDraft(name, category, due, PRIORITIES[priority], estimate),
                             remaining,
                             due_minute=parse_due_clock(due_time),
+                        )
+                        set_required(
+                            DEFAULT_DB_PATH, task.id, bool(due is not None and must_finish)
                         )
                         st.session_state["edit_task_rev"] = rev + 1
                         st.session_state.pop("open_task_details", None)
@@ -712,24 +772,47 @@ def main() -> None:
     greeting = (
         "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
     )
-    st.markdown(
-        '<div class="pw-hero">'
-        f'<div class="pw-eyebrow">{now:%A, %d %B %Y}</div>'
-        f"<h1>{greeting}.</h1>"
-        "<p>A clearer view of your tasks, deadlines, and the week ahead.</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
     try:
         initialize_quick_tasks(DEFAULT_DB_PATH)
         overview = load_overview(DEFAULT_DB_PATH, now.date())
         categories = list_task_categories(DEFAULT_DB_PATH)
         due_times = list_task_due_times(DEFAULT_DB_PATH)
+        profile = load_study_dna(DEFAULT_DB_PATH)
+        required_ids = required_task_ids(DEFAULT_DB_PATH, overview.tasks)
     except (ValueError, sqlite3.Error, OSError):
         logging.exception("Could not load Home data")
         st.error("Couldn't load your workspace. Check the database and restart.")
         st.stop()
         return
+    personal = f", {escape(profile.name)}" if profile and profile.name else ""
+    st.markdown(
+        '<div class="pw-hero">'
+        f'<div class="pw-eyebrow">{now:%A, %d %B %Y}</div>'
+        f"<h1>{greeting}{personal}.</h1>"
+        "<p>Your tasks, deadlines and one sensible next step.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if profile is None and not st.session_state.get("study_dna_later"):
+        with st.container(border=True):
+            if render_form(DEFAULT_DB_PATH, onboarding=True):
+                st.rerun()
+            if st.button("Maybe later — show my dashboard", key="study_dna_skip"):
+                st.session_state["study_dna_later"] = True
+                st.rerun()
+    if profile is not None:
+        labels = {
+            "early": "early morning",
+            "midday": "late morning",
+            "afternoon": "afternoon",
+            "evening": "evening",
+            "varies": "flexible hours",
+        }
+        st.caption(
+            f"Study DNA: strongest focus in {labels[profile.concentration]}. "
+            "It's a preference, not a restriction. "
+        )
+        st.page_link("workspace/views/settings.py", label="Edit Study DNA")
     message = st.session_state.pop("home_message", None)
     if message:
         st.success(message)
@@ -762,6 +845,9 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    nudge = _personalized_nudge(overview, now.date(), profile)
+    if nudge:
+        st.caption(nudge)
     _home_priorities(overview, due_times, now.date())
     newly_added = st.session_state.get("newly_added_task")
     _suggestion(overview, now, newly_added)
@@ -791,6 +877,23 @@ def main() -> None:
             insight_description = "No significant schedule changes are currently suggested."
     st.markdown("<h3>Planning insight</h3>", unsafe_allow_html=True)
     st.markdown(insight_card(insight_title, insight_description), unsafe_allow_html=True)
+    if overview.advanced.steps:
+        candidate = compare_plans(overview.advanced, now).preserve.revision
+        coverage = check_required_coverage(overview.advanced, candidate, now, required_ids)
+        if coverage.outstanding_minutes:
+            st.warning(
+                f"Deadline radar · {pretty_duration(coverage.outstanding_minutes)} of "
+                "required study time due this week has no proposed slot yet."
+            )
+            with st.expander("Which deadlines need attention?"):
+                for task_name in coverage.tasks_short[:8]:
+                    st.write(task_name)
+                st.caption("Based on the current quick preview, not proof of infeasibility.")
+        elif coverage.required_minutes:
+            st.caption(
+                "Deadline radar · Current preview allocates study time for all "
+                "required timed work due this week. Work still needs to be completed."
+            )
     if st.button("Plan my week", key="home_plan_week", type="primary"):
         st.session_state["start_week_plan"] = True
         st.switch_page("workspace/views/week.py")

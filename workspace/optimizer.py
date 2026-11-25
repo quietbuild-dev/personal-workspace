@@ -17,6 +17,8 @@ from workspace.advanced_planner import (
     validate_revision,
     week_bounds,
 )
+from workspace.deadline_guarantees import check_required_coverage
+from workspace.study_dna import StudyDNA, preferred_overlap_minutes
 
 MIN_PREFERRED_SESSION_MINUTES = 25
 
@@ -96,6 +98,9 @@ def optimize(
     goal="deadlines",
     time_limit=2.0,
     reschedule_session_id=None,
+    dna: StudyDNA | None = None,
+    compact: bool = False,
+    require_task_ids: frozenset[int] = frozenset(),
 ) -> OptimizationResult:
     """Lexicographic objectives; OPTIMAL only when every level is proven.
 
@@ -108,6 +113,10 @@ def optimize(
         raise ValueError("Choose a supported scheduling goal.")
     if not isinstance(now, datetime) or now.tzinfo is not None:
         raise ValueError("Use a naive local datetime for the local weekly calendar.")
+    if dna is not None and not isinstance(dna, StudyDNA):
+        raise ValueError("Invalid Study DNA profile.")
+    if not isinstance(require_task_ids, frozenset):
+        raise ValueError("Expected a frozen set of required task IDs.")
     if not 0 < time_limit <= 30:
         raise ValueError("Solver time limit must be between zero and 30 seconds.")
     tick = perf_counter()
@@ -137,7 +146,18 @@ def optimize(
         return fallback("UNAVAILABLE", "Optimizer unavailable; showing the greedy fallback.")
     try:
         return _solve(
-            cp, snapshot, now, goal, time_limit, reschedule_session_id, tick, fallback, baseline
+            cp,
+            snapshot,
+            now,
+            goal,
+            time_limit,
+            reschedule_session_id,
+            tick,
+            fallback,
+            baseline,
+            dna,
+            compact,
+            require_task_ids,
         )
     except (RuntimeError, ValueError, OverflowError) as error:
         return fallback(
@@ -147,7 +167,20 @@ def optimize(
         )
 
 
-def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, baseline):
+def _solve(
+    cp,
+    snapshot,
+    now,
+    goal,
+    time_limit,
+    reschedule_id,
+    tick,
+    fallback,
+    baseline,
+    dna,
+    compact,
+    require_task_ids,
+):
     model = cp.CpModel()
     monday, sunday = week_bounds(now.date())
     days = [now.date() + timedelta(days=i) for i in range((sunday - now.date()).days + 1)]
@@ -166,13 +199,18 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
     limits = {b.day: b.minutes for b in snapshot.budgets}
     completed = _already_done_minutes(snapshot)
     segments = []
+    focus = dna.focus_window if dna is not None else None
+    preferred_min = dna.minimum_session if dna is not None else MIN_PREFERRED_SESSION_MINUTES
     for day in days:
         for a, b in _gap_intervals(
             day, windows, blocked.get(day, []), cutoff if day == now.date() else 0
         ):
-            cuts = sorted(
-                {a, b} | {p for s in saved if s.day == day for p in (s.start, s.end) if a < p < b}
-            )
+            cuts = {a, b} | {
+                p for s in saved if s.day == day for p in (s.start, s.end) if a < p < b
+            }
+            if focus is not None:
+                cuts |= {point for point in focus if a < point < b}
+            cuts = sorted(cuts)
             segments.extend((day, x, y) for x, y in zip(cuts, cuts[1:]))
     if len(segments) * len(steps) > 12000:
         return fallback(
@@ -203,13 +241,27 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
     for step in steps.values():
         amounts[step.id] = sum(r[6] for r in records if r[0].id == step.id)
         model.add(amounts[step.id] <= step.remaining_minutes)
+        if (
+            step.task_id in require_task_ids
+            and step.deadline is not None
+            and step.deadline <= sunday
+        ):
+            # Strict completion is used only for explicit A/B alternatives.
+            # If capacity is insufficient, the caller presents no complete alternative.
+            model.add(amounts[step.id] == step.remaining_minutes)
     _add_dependencies(model, snapshot, records, amounts, monday)
     loads = []
+    active_days = []
     for day in days:
         model.add_no_overlap([r[8] for r in records if r[1] == day])
         work = sum(r[6] for r in records if r[1] == day)
         model.add(work <= max(0, limits.get(day, 1440) - completed.get(day, 0)))
         loads.append(work + completed.get(day, 0))
+        if compact:
+            used = model.new_bool_var(f"study_day_{day.isoformat()}")
+            model.add(work <= 1440 * used)
+            model.add(work >= used)
+            active_days.append(used)
     preserved = []
     for s in saved:
         pieces = [
@@ -232,6 +284,9 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
     importance = sum(r[6] * {1: 1, 2: 3, 3: 9}[r[0].priority] for r in records)
     keep_count = sum(p for _, p in preserved)
     fragments = sum(r[7] for r in records)
+    preferred_focus_minutes = sum(
+        r[6] for r in records if focus is not None and r[2] >= focus[0] and r[3] <= focus[1]
+    )
     # These are soft preferences, never feasibility constraints. Short study
     # blocks remain possible for genuinely short tasks or small free gaps.
     tiny_blocks = []
@@ -242,10 +297,10 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
             (previous.day - monday).days * 1440 + previous.start
         )
     for index, r in enumerate(records):
-        if r[0].remaining_minutes >= MIN_PREFERRED_SESSION_MINUTES:
+        if r[0].remaining_minutes >= preferred_min:
             tiny = model.new_bool_var(f"tiny_{index}")
-            model.add(r[6] <= MIN_PREFERRED_SESSION_MINUTES - 1).only_enforce_if([r[7], tiny])
-            model.add(r[6] >= MIN_PREFERRED_SESSION_MINUTES).only_enforce_if([r[7], tiny.Not()])
+            model.add(r[6] <= preferred_min - 1).only_enforce_if([r[7], tiny])
+            model.add(r[6] >= preferred_min).only_enforce_if([r[7], tiny.Not()])
             model.add(tiny == 0).only_enforce_if(r[7].Not())
             tiny_blocks.append(tiny)
         previous_starts = prior_by_step.get(r[0].id, ())
@@ -259,7 +314,13 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
             move_distances.append(move)
     # Routine rewards exact preservation first, total scheduled work second,
     # and nearby changes over changes to a different day only on a tie.
-    quality = -(sum(move_distances) + 25 * fragments + 35 * sum(tiny_blocks))
+    move_weight = {"stable": 3, "moderate": 1, "open": 0}.get(
+        dna.flexibility if dna else "moderate", 1
+    )
+    quality = (
+        -(move_weight * sum(move_distances) + 25 * fragments + 35 * sum(tiny_blocks))
+        + 2 * preferred_focus_minutes
+    )
     peak = model.new_int_var(0, max([1440, *completed.values()]), "peak")
     model.add_max_equality(peak, loads)
     # Three sequential maximizations avoid arbitrary cross-unit weight scales.
@@ -267,7 +328,7 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
         "deadlines": (due, total, quality),
         "important": (importance, total, quality),
         "routine": (keep_count, total, quality),
-        "throughput": (total, keep_count, quality),
+        "throughput": (total, -sum(active_days) if compact else keep_count, quality),
         "balance": (total, -peak, quality),
     }[goal]
     # Seed the search with a feasible plan, split at the same segment boundaries.
@@ -332,9 +393,15 @@ def _solve(cp, snapshot, now, goal, time_limit, reschedule_id, tick, fallback, b
         )
     proposal = proposal_from_slots(snapshot, now, best)
     validate_revision(snapshot, proposal, now)
-    if _score(snapshot, proposal, now, goal, segments, len(records)) < _score(
-        snapshot, baseline, now, goal, segments, len(records)
-    ):
+    # The ordinary greedy baseline might omit required work. Never replace a
+    # deadline-complete constrained CP-SAT plan with such an incomplete baseline.
+    baseline_eligible = (
+        not require_task_ids
+        or check_required_coverage(snapshot, baseline, now, require_task_ids).complete
+    )
+    if baseline_eligible and _score(
+        snapshot, proposal, now, goal, segments, len(records), dna=dna, compact=compact
+    ) < _score(snapshot, baseline, now, goal, segments, len(records), dna=dna, compact=compact):
         return fallback(
             "BASELINE_BETTER",
             "The search did not improve the baseline for this goal; showing the greedy plan.",
@@ -369,7 +436,7 @@ def _coalesce(slots, kept):
     return tuple(merged)
 
 
-def _score(snapshot, proposal, now, goal, segments, record_count):
+def _score(snapshot, proposal, now, goal, segments, record_count, *, dna=None, compact=False):
     """Same objective units as the model, including artificial segment boundaries."""
     steps = {s.id: s for s in snapshot.steps}
     due = sum(
@@ -397,13 +464,23 @@ def _score(snapshot, proposal, now, goal, segments, record_count):
     total, keep = proposal.planned_minutes, proposal.unchanged
     from workspace.schedule_quality import shift_distance_minutes
 
-    short = sum(s.minutes < MIN_PREFERRED_SESSION_MINUTES for s in proposal.slots)
-    quality = -(shift_distance_minutes(snapshot, proposal) + 25 * fragments + 35 * short)
+    pref = dna.minimum_session if dna is not None else MIN_PREFERRED_SESSION_MINUTES
+    short = sum(
+        s.minutes < pref and steps[s.step_id].remaining_minutes >= pref for s in proposal.slots
+    )
+    window = dna.focus_window if dna is not None else None
+    move_weight = {"stable": 3, "moderate": 1, "open": 0}.get(
+        dna.flexibility if dna else "moderate", 1
+    )
+    quality = -(
+        move_weight * shift_distance_minutes(snapshot, proposal) + 25 * fragments + 35 * short
+    )
+    quality += 2 * preferred_overlap_minutes(proposal.slots, window)
     return {
         "deadlines": (due, total, quality),
         "important": (importance, total, quality),
         "routine": (keep, total, quality),
-        "throughput": (total, keep, quality),
+        "throughput": (total, -len({s.day for s in proposal.slots}) if compact else keep, quality),
         "balance": (total, -max(loads.values(), default=0), quality),
     }[goal]
 
