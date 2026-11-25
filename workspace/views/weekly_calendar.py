@@ -26,6 +26,7 @@ from workspace.advanced_repository import (
     load_snapshot,
     record_session,
 )
+from workspace.theme import CALENDAR_CSS
 
 
 def _minute(value: time) -> int:
@@ -72,7 +73,7 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
             y0=window.start,
             y1=window.end,
             line=dict(width=0),
-            fillcolor="rgba(167,187,169,0.09)",
+            fillcolor="rgba(186,169,208,0.09)",
             layer="below",
         )
 
@@ -124,9 +125,9 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
             event.end,
             event.title,
             "Fixed commitment",
-            color="#53616B",
-            line="#83929A",
-            foreground="#FFFFFF",
+            color="#4A5667",
+            line="#98A6BD",
+            foreground="#F2F4FA",
         )
     for slot in sorted(slots, key=lambda item: (item.day, item.start, item.step_id)):
         step = steps.get(slot.step_id)
@@ -137,9 +138,9 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
             slot.end,
             label,
             "Study session",
-            color="#A7BBA9",
-            line="#C4D3C6",
-            foreground="#17211A",
+            color="#655875",
+            line="#DDC5F0",
+            foreground="#FBF7FF",
         )
 
     ticks = list(range((lower + 59) // 60 * 60, upper + 1, 60))
@@ -147,9 +148,9 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
         title=dict(text=title, font=dict(size=14)),
         height=650,
         margin=dict(l=70, r=18, t=85, b=18),
-        paper_bgcolor="#191B1F",
-        plot_bgcolor="#191B1F",
-        font=dict(color="#D8DCDA"),
+        paper_bgcolor="#14141A",
+        plot_bgcolor="#14141A",
+        font=dict(color="#F1EEF5"),
         xaxis=dict(
             range=[-0.55, 6.55],
             tickmode="array",
@@ -157,7 +158,7 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
             ticktext=[day.strftime("%a %d") for day in days],
             side="top",
             showgrid=True,
-            gridcolor="#343A3A",
+            gridcolor="#393640",
             zeroline=False,
             fixedrange=True,
         ),
@@ -167,7 +168,7 @@ def _chart(events, slots, steps, monday, sunday, *, title, windows=()):
             tickvals=ticks,
             ticktext=[format_time(minute) for minute in ticks],
             showgrid=True,
-            gridcolor="#343A3A",
+            gridcolor="#393640",
             zeroline=False,
             fixedrange=True,
         ),
@@ -267,7 +268,8 @@ def calendar_html(
     .wp-next {font-size:10px;opacity:.90;white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis;}
     .wp-today {color:#d9efdc; background:#27332e;}
-    </style>"""
+    </style>""",
+        CALENDAR_CSS,
     ]
     markup.append(
         f'<div class="wp-scroll"><div class="wp-calendar" '

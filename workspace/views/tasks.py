@@ -18,8 +18,11 @@ from workspace.repository import (
     update_task,
 )
 
-st.title("Tasks & Projects")
-st.caption("Keep your commitments in one place.")
+st.title("Detailed Task Editor")
+st.caption(
+    "Advanced task records, categories, estimates, and deadlines. "
+    "For everyday task and checklist updates, use Tasks."
+)
 
 notice = st.session_state.pop("task_notice", None)
 if notice:

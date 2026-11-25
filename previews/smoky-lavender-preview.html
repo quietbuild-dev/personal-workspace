@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Workspace — Smoky Lavender preview</title>
+<style>
+:root{--bg:#14141A;--card:#22222B;--elevated:#2C2A36;--accent:#BAA9D0;
+--text:#F1EEF5;--muted:#A8A4B3;--border:#393640;--high:#E0A0A5;
+--med:#D9BD94;--low:#A8B1BB}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
+font:14px/1.5 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button{font:inherit;cursor:pointer}button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.top{height:74px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+justify-content:space-between;gap:26px;padding:0 max(34px,calc((100vw - 1250px)/2));background:#17161D}
+.logo{font-size:17px;font-weight:750;letter-spacing:-.04em;white-space:nowrap}
+.logo i{display:inline-grid;place-items:center;margin-right:12px;width:32px;height:32px;
+border-radius:10px;background:#41354F;color:#DCC9EF;font-style:normal}
+nav{display:flex;gap:7px}nav button{border:0;border-radius:10px;background:transparent;
+padding:11px 19px;color:var(--muted);font-weight:650}
+nav button.active{background:#342D40;color:#F1EEF5}nav button:hover{background:#292530;color:var(--text)}
+.preview-note{font-size:11px;border:1px solid var(--border);border-radius:30px;padding:6px 12px;
+color:var(--muted);white-space:nowrap}
+main{max-width:1250px;margin:auto;padding:40px 24px 65px}
+.page{display:none}.page.active{display:block}
+.eyebrow{color:var(--accent);font-size:11px;font-weight:780;letter-spacing:.16em;text-transform:uppercase}
+h1{font-size:40px;letter-spacing:-.06em;line-height:1.16;margin:10px 0;font-weight:760}
+.description{font-size:15px;color:var(--muted);margin:0 0 24px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:17px;margin:30px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:23px;
+box-shadow:0 12px 35px #00000017}.statname{font-size:12px;color:var(--muted);font-weight:620}
+.statvalue{font-size:34px;letter-spacing:-.05em;font-weight:760;margin:10px 0 3px}
+.sub{color:var(--muted);font-size:12px}.layout{display:grid;grid-template-columns:1.16fr .84fr;gap:18px}
+.stack{display:grid;gap:18px;align-content:start}h2{font-size:19px;letter-spacing:-.035em;margin:0 0 5px}
+.content-note{font-size:12px;color:var(--muted);margin-bottom:18px}
+.task{padding:15px 0;border-bottom:1px solid var(--border)}.task:last-of-type{border:0;padding-bottom:0}
+.tasktop{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.taskname{font-size:14px;font-weight:670}.badge{font-size:10px;font-weight:750;border-radius:15px;
+padding:4px 10px;border:1px solid;white-space:nowrap}.high{color:var(--high);background:#E0A0A512}
+.medium{color:var(--med);background:#D9BD9412}.low{color:var(--low);background:#A8B1BB12}
+.meta{color:var(--muted);font-size:12px;margin-top:6px}.progress{height:5px;
+background:var(--border);border-radius:9px;margin:12px 0 6px;overflow:hidden}
+.progress b{display:block;height:100%;background:var(--accent);border-radius:9px}
+.barbox{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-top:23px;text-align:center}
+.bartrack{height:62px;display:flex;align-items:flex-end;border-radius:6px;
+background:var(--elevated);overflow:hidden;margin-bottom:8px}.bar{width:100%;
+background:linear-gradient(#BAA9D0,#857198);border-radius:6px 6px 0 0}
+.barbox strong{font-size:11px;color:var(--muted);display:block}.barbox small{font-size:10px;color:var(--muted)}
+.insight{background:#28232F;border:1px solid #534960;border-left:3px solid var(--accent);
+border-radius:14px;padding:18px 23px;margin-top:20px}.insight strong{font-size:14px}
+.insight p{color:var(--muted);margin:5px 0 0;font-size:13px}
+.primary{background:var(--accent);color:#251D2B;border:1px solid var(--accent);
+border-radius:10px;font-weight:750;padding:11px 17px}
+.primary:hover{background:#D4C1E6}.secondary{background:#2C2A36;color:var(--text);
+border:1px solid #514A60;border-radius:10px;padding:10px 15px}
+.actions{display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;
+margin:25px 0 15px;flex-wrap:wrap}.toolbar .right{display:flex;gap:8px;align-items:center}
+.calendar{border:1px solid var(--border);border-radius:16px;background:#1A1921;
+overflow-x:auto}.calendar-grid{display:grid;grid-template-columns:68px repeat(7,minmax(122px,1fr));min-width:970px}
+.dayheader{height:51px;background:#24222D;border-left:1px solid var(--border);
+text-align:center;padding:10px;font-size:12px;font-weight:690;color:#BFB7CA}
+.dayheader.today{background:#393144;box-shadow:inset 0 -2px var(--accent);color:var(--text)}
+.gutter{height:51px;background:#24222D}.times,.daycol{height:480px;position:relative}
+.times span{position:absolute;right:12px;font-size:10px;color:var(--muted);transform:translateY(-50%)}
+.daycol{border-left:1px solid var(--border);background:repeating-linear-gradient(to bottom,
+transparent 0,transparent 59px,#34303D 59px,#34303D 60px)}
+.event{position:absolute;left:6px;right:6px;border-left:3px solid;border-radius:7px;
+font-size:11px;font-weight:700;line-height:1.28;padding:6px 7px;overflow:hidden;
+text-align:left;color:white;cursor:pointer;transition:filter .13s}
+.event:hover{filter:brightness(1.22)}.event small{display:block;font-weight:500;opacity:.8;margin-top:4px}
+.study{background:#655875;border-color:#DDC5F0}.lecture{background:#455A75;border-color:#8FAACB}
+.social{background:#65536E;border-color:#B7A0C9}.exercise{background:#3C5D55;border-color:#8AB9A6}
+.personal{background:#66564E;border-color:#C8A99D}.legend{display:flex;gap:18px;flex-wrap:wrap;
+font-size:12px;color:var(--muted);margin:13px 0 16px}.legend i{display:inline-block;
+width:9px;height:9px;border-radius:2px;margin-right:6px}.floating{display:none;background:#292531;
+border:1px solid #534961;border-radius:13px;padding:18px 20px;margin:15px 0}
+.floating.open{display:block}.floating h3{margin:0 0 10px;font-size:17px}.checkrow{margin:9px 0}
+.rescue{margin-top:27px}.strategies{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}
+.strategy{border:1px solid var(--border);background:var(--elevated);border-radius:13px;
+text-align:left;padding:16px;cursor:pointer}.strategy strong{font-size:14px;color:var(--text)}
+.strategy small{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.strategy.active{border-color:var(--accent);background:#362E41}
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.timeline{background:#1B1922;border:1px solid var(--border);border-radius:13px;padding:17px}
+.timeline h3{margin:0 0 14px;font-size:14px}.slot{border-left:3px solid;padding:12px;
+border-radius:7px;margin:8px 0;font-size:12px}.slot strong{display:block}.slot small{color:#ddd1e9}
+.slot.old{background:#393440;border-color:#9889A9}.slot.new{background:#655875;border-color:#D6B8F1}
+.slot.keep{background:#2D3241;border-color:#8FAACB}
+.task-list{display:grid;gap:12px;margin-top:25px}.task-list .card{padding:17px 20px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.stats{gap:10px}.top{padding:0 18px}}
+@media(max-width:680px){h1{font-size:30px}.stats{grid-template-columns:1fr 1fr}
+.stats .card:last-child{grid-column:1/-1}.top{height:auto;padding:12px;flex-wrap:wrap}
+nav{order:3;width:100%;justify-content:space-between}.preview-note{display:none}
+.strategies,.compare{grid-template-columns:1fr}main{padding:28px 14px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="logo"><i>✦</i>Personal Workspace</div>
+<nav aria-label="Demo navigation"><button class="active" data-page="home">Home</button>
+<button data-page="calendar">Calendar</button><button data-page="tasks">Tasks</button></nav>
+<div class="preview-note">Visual preview · No data is saved</div></header>
+<main>
+<section id="home" class="page active"><div class="eyebrow">Wednesday, 25 November 2026</div>
+<h1>Good morning.</h1><p class="description">A calmer view of your tasks, deadlines, and the week ahead.</p>
+<div class="stats"><div class="card"><div class="statname">Active tasks</div><div class="statvalue">7</div>
+<div class="sub">Assignments and to-dos</div></div><div class="card"><div class="statname">Planned hours</div>
+<div class="statvalue">12.5h</div><div class="sub">Accepted this week</div></div><div class="card">
+<div class="statname">Upcoming deadlines</div><div class="statvalue">3</div>
+<div class="sub">Due within seven days</div></div></div>
+<div class="layout"><div class="card"><h2>Today's focus</h2><div class="content-note">The work that needs your attention</div>
+<div class="task"><div class="tasktop"><span class="taskname">Finish statistics problem set</span>
+<span class="badge high">High</span></div><div class="meta">University · Due tomorrow · 1h 30m remaining</div>
+<div class="progress"><b style="width:66%"></b></div><div class="meta">2 of 3 steps complete</div></div>
+<div class="task"><div class="tasktop"><span class="taskname">Prepare association presentation</span>
+<span class="badge medium">Medium</span></div><div class="meta">Student association · Due Friday · 2h remaining</div>
+<div class="progress"><b style="width:35%"></b></div><div class="meta">1 of 3 steps complete</div></div>
+<div class="task"><div class="tasktop"><span class="taskname">Read microeconomics chapter</span>
+<span class="badge low">Low</span></div><div class="meta">University · Due Sunday · 45m remaining</div></div>
+<div class="actions"><button class="secondary" onclick="showPage('tasks')">View and update tasks</button></div></div>
+<div class="stack"><div class="card"><h2>Upcoming deadlines</h2><div class="content-note">The next seven days</div>
+<div class="task"><div class="tasktop"><span class="taskname">Statistics problem set</span><span class="badge high">High</span></div>
+<div class="meta">Tomorrow, 18:00</div></div><div class="task"><div class="tasktop"><span class="taskname">Association presentation</span>
+<span class="badge medium">Medium</span></div><div class="meta">Friday, 14:00</div></div></div>
+<div class="card"><h2>Weekly workload</h2><div class="content-note">Study sessions already in your calendar</div>
+<div class="barbox"><div><div class="bartrack"><div class="bar" style="height:68%"></div></div><strong>Mon</strong><small>2h</small></div>
+<div><div class="bartrack"><div class="bar" style="height:98%"></div></div><strong>Tue</strong><small>3h</small></div>
+<div><div class="bartrack"><div class="bar" style="height:80%"></div></div><strong>Wed</strong><small>2.5h</small></div>
+<div><div class="bartrack"><div class="bar" style="height:65%"></div></div><strong>Thu</strong><small>2h</small></div>
+<div><div class="bartrack"><div class="bar" style="height:85%"></div></div><strong>Fri</strong><small>2.5h</small></div>
+<div><div class="bartrack"><div class="bar" style="height:0"></div></div><strong>Sat</strong><small>—</small></div>
+<div><div class="bartrack"><div class="bar" style="height:20%"></div></div><strong>Sun</strong><small>30m</small></div>
+</div></div></div></div>
+<div class="insight"><strong>Planning insight</strong><p>One deadline may need attention. Compare your options before changing the saved calendar.</p></div>
+<div class="actions"><button class="primary" onclick="showPage('calendar')">Open calendar &amp; planner</button></div></section>
+<section id="calendar" class="page"><div class="eyebrow">Your week, at a glance</div><h1>My Calendar</h1>
+<p class="description">Lectures, plans, and study time together. Review changes on your terms.</p>
+<div class="toolbar"><div class="right"><button class="secondary">←</button><strong>23–29 November</strong>
+<button class="secondary">→</button><button class="secondary">Today</button></div>
+<div class="right"><button class="secondary">+ Add event</button><button class="secondary">Study preferences</button>
+<button class="secondary" onclick="document.getElementById('rescue').scrollIntoView({behavior:'smooth'})">Rescue my week</button></div></div>
+<div class="legend"><span><i style="background:#BAA9D0"></i>Study</span><span><i style="background:#8FAACB"></i>Lectures</span>
+<span><i style="background:#B7A0C9"></i>Social</span><span><i style="background:#8AB9A6"></i>Exercise</span>
+<span><i style="background:#C8A99D"></i>Personal</span></div>
+<div class="calendar"><div class="calendar-grid"><div class="gutter"></div>
+<div class="dayheader">Mon 23</div><div class="dayheader">Tue 24</div><div class="dayheader today">Wed 25</div>
+<div class="dayheader">Thu 26</div><div class="dayheader">Fri 27</div><div class="dayheader">Sat 28</div><div class="dayheader">Sun 29</div>
+<div class="times"><span style="top:0">09:00</span><span style="top:60px">10:00</span><span style="top:120px">11:00</span>
+<span style="top:180px">12:00</span><span style="top:240px">13:00</span><span style="top:300px">14:00</span>
+<span style="top:360px">15:00</span><span style="top:420px">16:00</span></div>
+<div class="daycol"><button class="event lecture" style="top:50px;height:105px" onclick="showDetails('Economics lecture','Lecture · Monday, 09:50–11:35')">Economics lecture<small>09:50–11:35</small></button>
+<button class="event study" style="top:220px;height:92px" onclick="showDetails('Statistics problem set','High priority · 2 of 3 subtasks complete')">Statistics problem set<small>12:40–14:12</small></button></div>
+<div class="daycol"><button class="event study" style="top:92px;height:98px" onclick="showDetails('Association presentation','Medium priority · Practice introduction')">Association presentation<small>10:32–12:10</small></button>
+<button class="event social" style="top:315px;height:74px" onclick="showDetails('Dinner with friends','Social · Tuesday, 14:15')">Dinner with friends</button></div>
+<div class="daycol"><button class="event lecture" style="top:20px;height:112px" onclick="showDetails('Statistics lecture','Lecture · Wednesday, 09:20–11:12')">Statistics lecture<small>09:20–11:12</small></button>
+<button class="event study" style="top:162px;height:110px" onclick="showDetails('Finish statistics problem set','High priority · Next: Submit solutions')">Finish statistics<small>11:42–13:32</small></button>
+<button class="event exercise" style="top:345px;height:62px" onclick="showDetails('Gym','Exercise · Wednesday')">Gym<small>14:45–15:47</small></button></div>
+<div class="daycol"><button class="event study" style="top:65px;height:112px" onclick="showDetails('Microeconomics review','Low priority · Read chapter')">Microeconomics review<small>10:05–11:57</small></button>
+<button class="event personal" style="top:275px;height:72px" onclick="showDetails('Appointment','Personal · Thursday')">Appointment</button></div>
+<div class="daycol"><button class="event lecture" style="top:24px;height:105px" onclick="showDetails('Computer Science','Lecture · Friday')">Computer Science</button>
+<button class="event study" style="top:230px;height:90px" onclick="showDetails('Presentation rehearsal','Medium priority · Final rehearsal')">Presentation rehearsal<small>12:50–14:20</small></button></div>
+<div class="daycol"><button class="event personal" style="top:190px;height:65px" onclick="showDetails('Groceries','Personal · Saturday')">Groceries</button></div>
+<div class="daycol"><button class="event study" style="top:190px;height:88px" onclick="showDetails('Weekly review','Low priority · Review upcoming work')">Weekly review</button></div>
+</div></div>
+<div id="detail" class="floating"><h3 id="detailTitle">Session details</h3><p class="sub" id="detailMeta"></p>
+<div class="checkrow"><label><input type="checkbox" checked disabled> Review problem statement</label></div>
+<div class="checkrow"><label><input type="checkbox" disabled> Submit final solutions</label></div>
+<p class="sub">Preview only: clicking a block shows example details. The real app uses your saved checklist and progress controls.</p>
+<button class="secondary" onclick="document.getElementById('detail').classList.remove('open')">Close</button></div>
+<div id="rescue" class="rescue card"><h2>Rescue my week</h2><p class="sub">Compare two suggestions before deciding. No saved plans change in this preview.</p>
+<div class="strategies"><button class="strategy active" data-strategy="keep" onclick="selectStrategy('keep')"><strong>Change as little as possible</strong>
+<small>Keep the study times that still work.</small></button>
+<button class="strategy" data-strategy="rebuild" onclick="selectStrategy('rebuild')"><strong>Find more time for unfinished work</strong>
+<small>Rearrange more of the week to fit work.</small></button></div>
+<div class="stats" style="margin:12px 0 22px"><div class="card"><div class="statname">Study time proposed</div>
+<div id="planned" class="statvalue" style="font-size:23px">12h 15m</div></div><div class="card">
+<div class="statname">Existing blocks affected</div><div id="affected" class="statvalue" style="font-size:23px">2</div></div>
+<div class="card"><div class="statname">Additional work</div><div id="additional" class="statvalue" style="font-size:23px">0m</div></div></div>
+<div class="compare"><div class="timeline"><h3>Before</h3>
+<div class="slot keep"><strong>Statistics lecture</strong><small>09:00–10:00 · Preserved</small></div>
+<div class="slot old"><strong>Statistics problem set</strong><small>09:00–10:00 · Previous time</small></div></div>
+<div class="timeline"><h3>After</h3><div class="slot keep"><strong>Statistics lecture</strong><small>09:00–10:00 · Preserved</small></div>
+<div class="slot new"><strong>Statistics problem set</strong><small id="proposalTime">15:00–16:00 · Suggested</small></div></div></div>
+<div class="legend"><span><i style="background:#9889A9"></i>Previous</span>
+<span><i style="background:#D6B8F1"></i>Suggested</span><span><i style="background:#625C6B"></i>Preserved</span></div>
+<div class="actions"><button class="primary" onclick="alert('Preview only: no saved calendar is modified.')">Approve changes</button>
+<button class="secondary" onclick="showPage('calendar')">Cancel preview</button>
+<button class="secondary" onclick="alert('Undo is only available in the live application after an accepted plan.')">Undo last plan</button></div>
+</div></section>
+<section id="tasks" class="page"><div class="eyebrow">Your workspace</div><h1>Tasks & assignments</h1>
+<p class="description">One place to capture work, check off steps, and keep priorities in view.</p>
+<div class="stats"><div class="card"><div class="statname">Open tasks</div><div class="statvalue">7</div></div>
+<div class="card"><div class="statname">High priority</div><div class="statvalue">2</div></div>
+<div class="card"><div class="statname">Completed</div><div class="statvalue">6</div></div></div>
+<button class="primary" onclick="alert('Preview only: task creation is available in the live app.')">+ Add a task</button>
+<div class="task-list"><div class="card"><div class="tasktop"><span class="taskname">Finish statistics problem set</span><span class="badge high">High</span></div>
+<div class="meta">University · Due tomorrow · 2 of 3 subtasks complete</div><div class="progress"><b style="width:66%"></b></div></div>
+<div class="card"><div class="tasktop"><span class="taskname">Prepare association presentation</span><span class="badge medium">Medium</span></div>
+<div class="meta">Student association · Due Friday · 1 of 3 subtasks complete</div><div class="progress"><b style="width:33%"></b></div></div></div></section>
+</main>
+<script>
+function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===name));
+document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===name));
+window.scrollTo({top:0,behavior:'smooth'});}
+document.querySelectorAll('nav button').forEach(button=>button.addEventListener('click',()=>showPage(button.dataset.page)));
+function showDetails(title,meta){document.getElementById('detailTitle').textContent=title;
+document.getElementById('detailMeta').textContent=meta;
+document.getElementById('detail').classList.add('open');document.getElementById('detail').scrollIntoView({behavior:'smooth',block:'nearest'});}
+function selectStrategy(which){document.querySelectorAll('.strategy').forEach(b=>b.classList.toggle('active',b.dataset.strategy===which));
+let rebuild=which==='rebuild';document.getElementById('planned').textContent=rebuild?'12h 30m':'12h 15m';
+document.getElementById('affected').textContent=rebuild?'8':'2';
+document.getElementById('additional').textContent=rebuild?'15m':'0m';
+document.getElementById('proposalTime').textContent=rebuild?'14:30–15:30 · Suggested':'15:00–16:00 · Suggested';}
+</script>
+</body></html>

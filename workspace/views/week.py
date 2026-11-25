@@ -21,11 +21,9 @@ from workspace.advanced_repository import (
     update_fixed_event,
 )
 from workspace.manual_planning import move_proposed_block
-from workspace.planning_insights import (
-    compare_plans,
-    scenario_unavailable,
-)
+from workspace.planning_insights import compare_plans, scenario_unavailable
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
+from workspace.theme import priority_badge
 from workspace.views.schedule_comparison import (
     before_after_html,
     changed_days,
@@ -213,9 +211,7 @@ def _selected_session(snapshot, selected_id: int, now: datetime) -> None:
         return
     with st.container(border=True):
         st.subheader(study_label(step))
-        priority_name = {3: "High", 2: "Medium", 1: "Low"}.get(task.priority, "Low")
-        priority_color = {3: "red", 2: "orange", 1: "gray"}.get(task.priority)
-        st.badge(priority_name, color=priority_color)
+        st.markdown(priority_badge(task.priority), unsafe_allow_html=True)
         if task.deadline:
             remaining_days = (task.deadline - now.date()).days
             due_text = (
@@ -388,18 +384,27 @@ def _review(snapshot, now: datetime) -> None:
         return
 
     with st.container(border=True):
-        st.markdown("**Rescue my week**")
-        st.caption("Your plans changed? See a possible adjustment before deciding.")
-        strategies = ["Change as little as possible", "Find more time for unfinished work"]
-        selected = (
-            st.segmented_control(
-                "Choose your approach",
-                strategies,
-                default=strategies[0],
-                key="calendar_plan_strategy",
-            )
-            or strategies[0]
+        st.markdown("### Rescue my week")
+        st.caption("Review two possible plans. Nothing is changed until you approve one.")
+        strategies = ("Change as little as possible", "Find more time for unfinished work")
+        selected = st.session_state.get("calendar_plan_strategy", strategies[0])
+        if selected not in strategies:
+            selected = strategies[0]
+        descriptions = (
+            "Keep the study times that still work.",
+            "Rearrange more of the week to fit work.",
         )
+        first, second = st.columns(2, gap="medium")
+        for i, column in enumerate((first, second)):
+            with column:
+                active = selected == strategies[i]
+                label = f"{'✓ ' if active else ''}{strategies[i]}\n\n{descriptions[i]}"
+                key = f"pw_strategy_{'selected_' if active else ''}{i}"
+                if st.button(label, key=key, width="stretch", help=descriptions[i]):
+                    st.session_state["calendar_plan_strategy"] = strategies[i]
+                    st.session_state.pop("calendar_adjusted_proposal", None)
+                    st.session_state.pop("calendar_adjusted_strategy", None)
+                    st.rerun()
         if st.session_state.get("calendar_adjusted_strategy") != selected:
             st.session_state.pop("calendar_adjusted_proposal", None)
         assessment = stable if selected == strategies[0] else baseline
@@ -410,7 +415,21 @@ def _review(snapshot, now: datetime) -> None:
             else assessment.revision
         )
         changed_count = proposal.removed_or_changed + proposal.added_or_changed
-        st.caption(f"{proposal.removed_or_changed} existing study blocks would change")
+        extra_work = max(0, assessment.scheduled_minutes - stable.scheduled_minutes)
+        st.markdown(
+            '<div class="pw-review-stats">'
+            '<div class="pw-review-stat"><strong>'
+            f"{_duration(assessment.scheduled_minutes)}</strong>"
+            "<span>Study time proposed</span></div>"
+            '<div class="pw-review-stat"><strong>'
+            f"{proposal.removed_or_changed}</strong>"
+            "<span>Existing blocks affected</span></div>"
+            '<div class="pw-review-stat"><strong>'
+            f"{_duration(extra_work)}</strong>"
+            "<span>Extra work vs minimal-change plan</span></div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
         if assessment.risks:
             serious = [
                 r for r in assessment.risks if r.reason == "overdue" or r.unscheduled_minutes >= 60
@@ -434,10 +453,9 @@ def _review(snapshot, now: datetime) -> None:
             if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
         )
         with st.container():
-            st.markdown("**Before and after**")
+            st.markdown("#### Before and after")
             dates = changed_days(saved, proposal.slots)
             if dates:
-                st.markdown("**Before → After**")
                 day = st.selectbox(
                     "Day to compare",
                     list(dates),
@@ -448,8 +466,13 @@ def _review(snapshot, now: datetime) -> None:
                     before_after_html(day, snapshot.events, saved, proposal.slots, steps),
                     unsafe_allow_html=True,
                 )
-                st.caption(
-                    "Muted outline = previous time · Sage = proposed time · Faded = unchanged"
+                st.markdown(
+                    '<div class="pw-legend">'
+                    '<span><i style="background:#9889A9"></i>Previous time</span>'
+                    '<span><i style="background:#D6B8F1"></i>Suggested time</span>'
+                    '<span><i style="background:#625C6B"></i>Preserved</span>'
+                    "</div>",
+                    unsafe_allow_html=True,
                 )
                 # Before/After is the primary explanation. A short summary
                 # remains optional so screen readers can access the changes.
@@ -510,7 +533,7 @@ def _review(snapshot, now: datetime) -> None:
                                 st.rerun()
         accept, dismiss = st.columns(2, gap="small")
         if accept.button(
-            "Accept changes",
+            "Approve changes",
             type="primary",
             key="accept_rescue_plan",
             disabled=not (proposal.added_or_changed or proposal.removed_or_changed),
@@ -523,7 +546,7 @@ def _review(snapshot, now: datetime) -> None:
                 st.session_state.pop("calendar_adjusted_strategy", None)
 
             _save(save_accepted, "Your updated calendar is saved.")
-        if dismiss.button("Not now", key="dismiss_rescue_plan"):
+        if dismiss.button("Cancel preview", key="dismiss_rescue_plan"):
             st.session_state.pop("reschedule_session_id", None)
             st.session_state.pop("calendar_adjusted_proposal", None)
             st.session_state.pop("calendar_adjusted_strategy", None)
@@ -552,7 +575,13 @@ def main() -> None:
         anchor_date = date.fromisoformat(date_param) if isinstance(date_param, str) else now.date()
     except ValueError:
         anchor_date = now.date()
-    st.title("My Calendar")
+    st.markdown(
+        '<div class="pw-hero">'
+        "<h1>My Calendar</h1>"
+        "<p>Lectures, plans, and study time together. Review changes on your terms.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     try:
         snapshot = load_snapshot(DEFAULT_DB_PATH)
     except (sqlite3.Error, OSError, ValueError):
@@ -654,7 +683,16 @@ def main() -> None:
     slots = [Slot(s.step_id, s.day, s.start, s.end) for s in sessions]
     links = {(s.step_id, s.day, s.start, s.end): s.id for s in sessions}
     with st.container(border=True):
-        st.caption("Sage: planned study · Blue: lectures · Violet: social · Green: exercise")
+        st.markdown(
+            '<div class="pw-legend">'
+            '<span><i style="background:#BAA9D0"></i>Study</span>'
+            '<span><i style="background:#8FAACB"></i>Lectures</span>'
+            '<span><i style="background:#B7A0C9"></i>Social</span>'
+            '<span><i style="background:#8AB9A6"></i>Exercise</span>'
+            '<span><i style="background:#C8A99D"></i>Personal</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
         st.markdown(
             calendar_html(
                 snapshot.events,

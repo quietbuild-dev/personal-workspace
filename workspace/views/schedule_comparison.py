@@ -5,6 +5,7 @@ from datetime import date
 from html import escape
 
 from workspace.advanced_planner import Slot, format_time
+from workspace.theme import COMPARISON_CSS
 
 
 def study_label(step) -> str:
@@ -141,6 +142,7 @@ def before_after_html(day, events, previous, proposed, steps) -> str:
     </style>"""
     return (
         style
+        + COMPARISON_CSS
         + f'<div class="cmp-layout" aria-label="Before and after calendar for {day:%d %B}">'
         + _column(day, events, previous, proposed, steps, lower, upper, "Before")
         + _column(day, events, proposed, previous, steps, lower, upper, "After")
