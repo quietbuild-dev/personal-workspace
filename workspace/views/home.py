@@ -7,7 +7,7 @@ from html import escape
 
 import streamlit as st
 
-from workspace.advanced_planner import format_time
+from workspace.advanced_planner import format_time, week_bounds
 from workspace.advanced_repository import (
     StaleProposalError,
     accept_revision,
@@ -29,6 +29,7 @@ from workspace.quick_tasks import (
 )
 from workspace.repository import DEFAULT_DB_PATH, delete_task
 from workspace.simple_planning import proposal_notice
+from workspace.theme import insight_card, priority_badge, stat_card
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -231,7 +232,7 @@ def _suggestion(overview, now: datetime, newly_added: int | None) -> None:
             st.session_state.pop("home_adjusted_proposal", None)
             st.rerun()
         with st.popover("Change a suggested time"):
-            from workspace.advanced_planner import format_time as clock
+            from workspace.advanced_planner import week_bounds as clock
             from workspace.views.week import TIME_CHOICES, _as_minute
 
             choices = [
@@ -302,18 +303,43 @@ def _today(overview, now: datetime) -> None:
 
 
 def _priority_badge(priority: int) -> str:
-    """Use the same semantic priority colors on Home and in Calendar details."""
-    colors = {3: ("High", "#CE827E"), 2: ("Medium", "#C9AE7C"), 1: ("Low", "#A5ADA7")}
-    label, color = colors.get(priority, colors[1])
+    """Retain the V4 helper while sharing the palette with the calendar."""
+    return priority_badge(priority)
+
+
+def _weekly_workload(overview, today: date) -> str:
+    """Read-only overview of accepted sessions, not hypothetical proposals."""
+    monday, _ = week_bounds(today)
+    minutes_by_day = {}
+    for session in overview.advanced.sessions:
+        if session.status == "planned":
+            minutes_by_day[session.day] = (
+                minutes_by_day.get(session.day, 0) + session.end - session.start
+            )
+    days = [monday + timedelta(days=i) for i in range(7)]
+    peak = max(120, *(minutes_by_day.get(day, 0) for day in days))
+    bars = []
+    for day in days:
+        minutes = minutes_by_day.get(day, 0)
+        percentage = round(100 * minutes / peak)
+        label = f"{minutes / 60:g}h" if minutes else "—"
+        bars.append(
+            '<div class="pw-workday">'
+            '<div class="pw-workbar-track">'
+            f'<div class="pw-workbar-fill" style="height:{percentage}%"></div>'
+            "</div>"
+            f'<div class="pw-workday-label">{day:%a}</div>'
+            f'<div class="pw-workday-value">{label}</div></div>'
+        )
     return (
-        f'<span style="border:1px solid {color};color:{color};'
-        "padding:2px 9px;border-radius:20px;font-size:.75rem;"
-        f'font-weight:700">{label}</span>'
+        '<div class="pw-card"><h3>Weekly workload</h3>'
+        '<p class="pw-section-note">Study sessions already in your calendar</p>'
+        '<div class="pw-workload">' + "".join(bars) + "</div></div>"
     )
 
 
 def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
-    """Prominent task names and small, consistent urgency badges."""
+    """Two-column focus and deadline overview; all controls remain lower on Home."""
     pending = [task for task in overview.tasks if task.status == "pending"]
     pending.sort(
         key=lambda task: (
@@ -328,27 +354,72 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
         for task in pending
         if task.deadline is not None and task.deadline <= today + timedelta(days=7)
     ]
-    left, right = st.columns(2, gap="medium")
+    checklist_by_task = {}
+    for step in overview.advanced.steps:
+        if step.kind == "checklist":
+            checklist_by_task.setdefault(step.task_id, []).append(step)
+
+    focus = [
+        '<div class="pw-card"><h3>Today’s focus</h3>',
+        '<p class="pw-section-note">The work that needs your attention</p>',
+    ]
+    for task in pending[:4]:
+        checklist = checklist_by_task.get(task.id, [])
+        done = sum(item.checked for item in checklist)
+        remaining = pretty_duration(task.remaining_minutes)
+        focus.extend(
+            [
+                '<div class="pw-task-preview"><div class="pw-task-head">',
+                f'<div class="pw-task-title">{escape(task.title)}</div>',
+                priority_badge(task.priority),
+                '</div><div class="pw-task-meta">',
+                f"{escape(task.category)} · "
+                f"{escape(due_display(task, deadline_times, today))} "
+                f"· {remaining} remaining",
+                "</div>",
+            ]
+        )
+        if checklist:
+            percentage = round(100 * done / len(checklist))
+            focus.extend(
+                [
+                    f'<div class="pw-progress" aria-label="{done} of '
+                    f'{len(checklist)} subtasks complete"><span '
+                    f'style="width:{percentage}%"></span></div>',
+                    f'<div class="pw-task-meta">{done} of {len(checklist)} steps complete</div>',
+                ]
+            )
+        focus.append("</div>")
+    if not pending:
+        focus.append('<p class="pw-section-note">Nothing outstanding right now.</p>')
+    focus.append("</div>")
+
+    due = [
+        '<div class="pw-card"><h3>Upcoming deadlines</h3>',
+        '<p class="pw-section-note">The next seven days</p>',
+    ]
+    for task in soon[:4]:
+        due.extend(
+            [
+                '<div class="pw-task-preview"><div class="pw-task-head">',
+                f'<div class="pw-task-title">{escape(task.title)}</div>',
+                priority_badge(task.priority),
+                '</div><div class="pw-task-meta">',
+                escape(due_display(task, deadline_times, today)),
+                "</div></div>",
+            ]
+        )
+    if not soon:
+        due.append('<p class="pw-section-note">No deadlines in the next seven days.</p>')
+    due.append("</div>")
+
+    left, right = st.columns([1.18, 0.82], gap="large")
     with left:
-        with st.container(border=True):
-            st.subheader("Today's focus")
-            for task in pending[:3]:
-                name, priority = st.columns([5, 1.3], vertical_alignment="center")
-                with name:
-                    st.markdown(f"**{task.title}**")
-                with priority:
-                    st.markdown(_priority_badge(task.priority), unsafe_allow_html=True)
-                st.caption(f"{task.category} · {due_display(task, deadline_times, today)}")
-            if not pending:
-                st.caption("You're all caught up.")
+        st.markdown("".join(focus), unsafe_allow_html=True)
+        st.page_link("workspace/views/task_board.py", label="View and update tasks")
     with right:
-        with st.container(border=True):
-            st.subheader("Due this week")
-            for task in soon[:4]:
-                st.markdown(f"**{task.title}**")
-                st.caption(due_display(task, deadline_times, today))
-            if not soon:
-                st.caption("No deadlines in the next seven days.")
+        st.markdown("".join(due), unsafe_allow_html=True)
+        st.markdown(_weekly_workload(overview, today), unsafe_allow_html=True)
 
 
 def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, ...]) -> None:
@@ -370,7 +441,7 @@ def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, 
         actually_left = (
             sum(step.remaining_minutes for step in timed) if timed else task.remaining_minutes
         )
-        with st.container(border=False):
+        with st.container(border=True):
             name, action, partial, details = st.columns([5, 1.1, 1.1, 1.3], gap="small")
             with name:
                 st.markdown(
@@ -467,7 +538,6 @@ def _task_rows(overview, deadline_times: dict[int, int], categories: tuple[str, 
                         _apply(save_partial, "Progress saved. Your schedule may need review.")
             if st.session_state.get("open_task_details") == task.id:
                 _edit_task(overview, categories, deadline_times)
-        st.divider()
 
 
 def _edit_task(overview, categories, deadline_times) -> None:
@@ -592,17 +662,17 @@ def _edit_task(overview, categories, deadline_times) -> None:
 
 def main() -> None:
     now = datetime.now()
+    greeting = (
+        "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
+    )
     st.markdown(
-        """<style>
-      [data-testid="stDateInput"] input, [data-testid="stTextInput"] input {
-        font-size: 0.96rem !important; min-height: 42px;
-      }
-      [data-testid="stMainBlockContainer"] h3 {letter-spacing:-.02em;}
-    </style>""",
+        '<div class="pw-hero">'
+        f'<div class="pw-eyebrow">{now:%A, %d %B %Y}</div>'
+        f"<h1>{greeting}.</h1>"
+        "<p>A calmer view of your tasks, deadlines, and the week ahead.</p>"
+        "</div>",
         unsafe_allow_html=True,
     )
-    st.title("Today")
-    st.caption(f"{now:%A, %d %B %Y} · Your tasks, events and study plans")
     try:
         initialize_quick_tasks(DEFAULT_DB_PATH)
         overview = load_overview(DEFAULT_DB_PATH, now.date())
@@ -616,33 +686,73 @@ def main() -> None:
     message = st.session_state.pop("home_message", None)
     if message:
         st.success(message)
+
     pending = [task for task in overview.tasks if task.status == "pending"]
-    st.caption(
-        f"{len(pending)} open tasks · "
-        f"{sum(bool(t.deadline and t.deadline <= now.date()) for t in pending)} due or overdue"
+    upcoming = sum(
+        task.deadline is not None and now.date() <= task.deadline <= now.date() + timedelta(days=7)
+        for task in pending
     )
+    monday, sunday = week_bounds(now.date())
+    planned = sum(
+        session.end - session.start
+        for session in overview.advanced.sessions
+        if session.status == "planned" and monday <= session.day <= sunday
+    )
+    a, b, c = st.columns(3, gap="medium")
+    with a:
+        st.markdown(
+            stat_card("Active tasks", str(len(pending)), "Assignments and to-dos"),
+            unsafe_allow_html=True,
+        )
+    with b:
+        st.markdown(
+            stat_card("Planned hours", f"{planned / 60:g}h", "Accepted this week"),
+            unsafe_allow_html=True,
+        )
+    with c:
+        st.markdown(
+            stat_card("Upcoming deadlines", str(upcoming), "Due within seven days"),
+            unsafe_allow_html=True,
+        )
+
+    _home_priorities(overview, due_times, now.date())
     newly_added = st.session_state.get("newly_added_task")
     _suggestion(overview, now, newly_added)
+
+    insight_title = "Your week at a glance"
+    insight_description = "Review your saved study sessions or adjust your preferences."
     if not newly_added and (overview.advanced.budgets or overview.advanced.windows):
         insight = compare_plans(overview.advanced, now)
-        if insight.preserve.risks:
-            top = insight.preserve.risks[0]
-            if top.reason == "overdue" or top.unscheduled_minutes >= 60:
-                st.info(
-                    f"Schedule needs attention · {top.title} — "
-                    "review a possible adjustment in My Calendar."
-                )
-                st.page_link("workspace/views/week.py", label="Review schedule")
+        significant = [
+            risk
+            for risk in insight.preserve.risks
+            if risk.reason == "overdue" or risk.unscheduled_minutes >= 60
+        ]
+        if significant:
+            insight_title = "One deadline needs attention"
+            insight_description = (
+                f"{significant[0].title} may need a scheduling adjustment. "
+                "Compare your options before changing anything."
+            )
         elif insight.preserve.changed:
-            st.info("A revised plan is available; your accepted calendar is unchanged.")
-            st.page_link("workspace/views/week.py", label="Review schedule")
-    _home_priorities(overview, due_times, now.date())
-    left, right = st.columns([1.08, 1], gap="medium")
-    with left:
+            insight_title = "An updated plan is available"
+            insight_description = (
+                "You can review a new arrangement without changing the saved calendar."
+            )
+        else:
+            insight_title = "Your saved plan is looking steady"
+            insight_description = "No significant schedule changes are currently suggested."
+    st.markdown("<h3>Planning insight</h3>", unsafe_allow_html=True)
+    st.markdown(insight_card(insight_title, insight_description), unsafe_allow_html=True)
+    st.page_link("workspace/views/week.py", label="Open calendar & planner")
+
+    with st.expander("Today's schedule", expanded=False):
         _today(overview, now)
-    with right:
+    with st.expander("Add a task", expanded=False):
         _new_task(categories)
-    _task_rows(overview, due_times, categories)
+    with st.expander("Manage tasks", expanded=False):
+        _task_rows(overview, due_times, categories)
+    st.caption("For a full task view, use Tasks in the top navigation.")
 
 
 if __name__ == "__main__":
