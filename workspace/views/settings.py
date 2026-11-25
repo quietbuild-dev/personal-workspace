@@ -55,13 +55,13 @@ def render_form(db_path: Path, *, onboarding=False) -> bool:
             index=list(SESSION_OPTIONS).index(current.session_length),
             format_func=SESSION_OPTIONS.get,
         )
-        c = st.radio(
+        c = st.selectbox(
             "How do you prefer to spread your study time?",
             list(DISTRIBUTION_OPTIONS),
             index=list(DISTRIBUTION_OPTIONS).index(current.distribution),
             format_func=DISTRIBUTION_OPTIONS.get,
         )
-        d = st.radio(
+        d = st.selectbox(
             "How flexible are your preferred study times?",
             list(FLEXIBILITY_OPTIONS),
             index=list(FLEXIBILITY_OPTIONS).index(current.flexibility),
