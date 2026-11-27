@@ -1,60 +1,31 @@
-# MVP verification record — draft as of 12 November 2026
+# Testing notes
 
-## Advanced milestone isolated-environment checks (12 November 2026)
+We use **pytest** for automated checks and **Ruff** for linting. The main coverage includes task persistence, progress tracking, time constraints, dependencies, scheduling proposals, SQLite transactions, Undo, and selected Streamlit interactions.
 
-- Previous 57 MVP tests: still passing.
-- Additional advanced scheduling, persistence, migration, parent/child integration,
-  replay prevention, stale-proposal validation, demo generation and algorithm
-  comparison tests: **82 total passed** plus 44 `unittest.subTest` cases in pytest,
-  Python 3.13.5 / pytest 9.0.2. Standard-library `unittest` also passed 82 tests.
-- Controlled baseline: 12 timed steps and a simulated missed session; both methods
-  scheduled 1080 minutes with 360-minute heuristic shortfalls. Preserving existing
-  sessions retained 9 unchanged versus 0 with full rescheduling. Runtime varies
-  by machine; see `python -m scripts.evaluate_advanced --repeats 100`.
-- **Not verified in this environment:** actual Streamlit browser rendering,
-  Windows Python 3.12, Ruff lint/format, real user database migration,
-  GitHub PR status or course rubric. Students should fill in these checks on
-  their own computer; an isolated test pass does not imply deployment completion.
+## How to run the checks
 
----
+From the project root in Windows PowerShell:
 
-This is a reproducible record, **not** a claim that the full product has been
-browser tested or installed on a new Windows environment.
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
 
-## Checks that actually ran in the assistant's temporary build environment
+$testDir = Join-Path $env:TEMP ("pw-tests-" + [guid]::NewGuid().ToString("N"))
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp "$testDir"
 
-| Check | Result | Environment / limitation |
-| --- | --- | --- |
-| Original 21 task tests | Passed | Python 3.13.5, temporary SQLite DBs |
-| Expanded pytest suite | **57 passed** (44 subtests) | Python 3.13.5, pytest 9.0.2 |
-| Python module compile check | Passed | `python -m compileall -q app.py workspace` |
-| Demo DB creation and refuse-overwrite behavior | Passed | Temporary database; never used personal task DB |
-| Plotly import | Available, 6.5.2 | Does not establish Streamlit chart rendering |
-| Page form paths using a lightweight Streamlit stand-in | 6 passed | Basic view control flow against real temp SQLite; **not actual Streamlit or a browser** |
-| Streamlit app / local browser interaction | **Not tested here** | Streamlit not installed; pip download failed because DNS/network unavailable |
-| Ruff lint / format checks | **Not tested here** | Ruff unavailable; pip download failed |
-| Python 3.12 runtime and fresh Windows install | **Not tested here** | Assistant runtime is Python 3.13.5 |
-| Current Git branch merge or PR state | **Not verified remotely** | Uploaded ZIP intentionally lacks `.git` metadata |
+.\.venv\Scripts\python.exe -m scripts.check_optimizer_ui
+```
 
-New tests: planner 13, metrics 7, availability / migration / integration 8,
-demo generator 2, simulated Streamlit view paths 6, plus the original 21 = 57 total. Planner scenarios include
-200 fixed-seed runs of the main invariants. All tests use temporary database
-files; no user DB was available to, or modified by, the test runner.
+The temporary base directory keeps test artifacts separate from personal workspace data. Some UI tests use simulated Streamlit interactions; a manual browser check remains necessary.
 
-## Student Windows verification — fill in after running
+## Verification record
 
-| Check | Result / date / notes |
-| --- | --- |
-| `py -3.12 --version` | Pending |
-| `.\.venv\Scripts\python.exe -m pytest` | Pending |
-| `.\.venv\Scripts\python.exe -m ruff check .` | Pending |
-| `.\.venv\Scripts\python.exe -m ruff format --check .` | Pending |
-| `.\.venv\Scripts\python.exe -m scripts.check_ui` | Pending |
-| Manual browser checklist (see DEMO_WALKTHROUGH.md) | Pending |
-| Old database copy migrated without task data loss | Pending |
-| Fresh venv install and pip freeze lock review | Pending |
-| Peer review, PR, merge to `main` | Pending |
-| 2026 assignment brief and lecturer approval | Pending |
+- **27 November 2026:** The earlier full suite passed **385 tests and 58 subtests**.
+- **After the last Home/checklist changes:** The targeted regression suite passed **20 tests**.
 
-If a check fails, keep the failure visible here and fix the actual issue
-before labeling the deliverable release-ready.
+These runs were on different revisions. The complete suite should be rerun on the final commit before reporting a final project-wide result.
+
+## Evaluating the scheduler
+
+The [optimizer evaluation](OPTIMIZER_EVALUATION.md) uses fixed synthetic scenarios and records both the CP-SAT optimizer and the greedy baseline. The original measurement data is in [optimizer-benchmark.csv](optimizer-benchmark.csv). Results describe those workloads, not all possible student schedules.
+
+For a practical click-through checklist, see [Demo walkthrough](DEMO_WALKTHROUGH.md).

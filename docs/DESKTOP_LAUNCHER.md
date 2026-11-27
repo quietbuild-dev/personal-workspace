@@ -1,48 +1,31 @@
-# Personal Workspace: Windows desktop window
+# Desktop launcher (Windows)
 
-The Windows launcher displays Personal Workspace inside an embedded WebView2
-window instead of opening Microsoft Edge or Google Chrome. There are no browser
-tabs, extension setup pages, browser sign-ins, or visible PowerShell window.
-The Python/Streamlit code, SQLite storage, scheduling and Undo logic are unchanged.
+Prefer a dedicated window instead of another browser tab? Personal Workspace can open in its own Windows window using **pywebview** and **Microsoft Edge WebView2**. It's the same Streamlit app, with the same tasks, calendar, database, and planner — just without the browser tabs.
 
-## Installation
+## Set it up
 
-On Windows, from the project folder:
+First, follow the [Windows installation steps](../README.md#windows). Then run this in PowerShell from the project folder:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 & ".\Create Desktop Shortcut.bat"
 ```
 
-Double-click **Personal Workspace** on your desktop. It uses the existing
-Windows shortcut and `.vbs` launcher; you do not need to recreate a shortcut
-when only `scripts/launch_desktop.py` has changed.
+Double-click **Personal Workspace** on your desktop. You don't need to recreate the shortcut for normal Python source updates.
 
-## How it works
+## What's running behind the window?
 
-The launcher starts a private Streamlit server bound only to `127.0.0.1` on a
-random free port; it waits for the server, then opens a native `pywebview`
-window using Windows WebView2 (Chromium). No Microsoft account or internet
-connection is required to use the local project. The app still needs its
-server **while the window is open**, but it is a background process and stops
-when the window closes. It does not run 24/7.
+The launcher runs a local Streamlit server on `127.0.0.1` using an available port, then displays it in a WebView2 window. It only runs while the desktop app is open. No Microsoft account or internet connection is required to use your local workspace.
 
-This is a local desktop wrapper, **not** a bundled `.exe` installer: the
-project folder, Python `.venv`, and dependencies must still be present.
-The Windows machine must have the Microsoft Edge **WebView2 Runtime** and a
-compatible .NET runtime installed. These components do **not** use the normal
-Edge browser profile or its extensions. Windows 11 often includes WebView2;
-if missing, install the official Microsoft WebView2 Runtime.
+**This isn't a standalone `.exe`.** The project folder, Python environment, and dependencies must remain installed. Windows also needs WebView2 and a compatible .NET runtime; WebView2 doesn't use your normal Edge browser profile or extensions.
 
-## Troubleshooting
+## If something goes wrong
 
-- If the window fails to open, read
-  `%LOCALAPPDATA%\PersonalWorkspace\desktop-server.log`.
-- If you see a WebView2/.NET error, install the relevant runtime from Microsoft.
-- If `No module named 'webview'` appears, install the project's requirements.
-- You can always run the same application in an ordinary browser using
-  `.\.venv\Scripts\python.exe -m streamlit run app.py`.
-- The launcher clears `WORKSPACE_DB_PATH` so it opens your **personal** database,
-  never the temporary demo database. Do not test destructive actions using
-  this shortcut; use a separate demo process for exploratory tests.
-- Neither the Windows desktop shortcut nor this launcher should be run on macOS.
+- **Window won't open:** Check `%LOCALAPPDATA%\PersonalWorkspace\desktop-server.log`.
+- **WebView2 or .NET error:** Install the missing Microsoft runtime.
+- **`No module named 'webview'`:** Reinstall the development requirements.
+- **Prefer a browser?** Run `.\.venv\Scripts\python.exe -m streamlit run app.py`.
+
+**Data safety:** The normal desktop shortcut opens your personal database, not the demo. For exploring or testing edits, use [the sample workspace](PLAYGROUND_DESKTOP_DEMO.md).
+
+This launcher is Windows-only. On macOS, use the [browser instructions](../README.md#macos).

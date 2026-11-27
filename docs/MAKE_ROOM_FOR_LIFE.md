@@ -1,21 +1,17 @@
-# Make Room for Life — Calendar feature
+# Make Room for Life
 
-This small, opt-in feature lets the user reserve a time interval (for example Friday 17:00–22:00) without moving fixed events. It uses the existing bounded CP-SAT optimizer or safe greedy fallback to propose alternative study slots around a temporary, in-memory personal event.
+Sometimes an evening should stay free. **Make Room for Life** lets you protect a personal time interval and preview what would happen to study blocks already on your calendar.
 
-**User flow:** Calendar → "Make room for life · Protect personal time" → choose day and hours → Preview free time → inspect preserved/changed study blocks and before/after → Protect this time (or Cancel). Only the final action writes to SQLite. The protected time becomes a Personal event, shown in the existing Calendar.
+The tool treats the proposed personal event as unavailable time and asks the existing planner for an alternative schedule. The preview shows what would stay, move, or no longer fit. It does not shift lectures or other fixed commitments to make space.
 
-**Correctness:** No preview writes. The app rejects windows overlapping fixed events, the past, or outside the current planning week. A preview is not approved if it would reduce already-booked due-study work or fail required-deadline coverage. Before approval, database fingerprints, window validity, requirements, and schedule constraints are checked again. Event, scheduled sessions, and Undo metadata commit in one SQLite transaction; failures roll back everything. Calendar's usual Undo removes the protected event and restores the previous schedule together, but only while the state is unchanged.
+## Safe by design
 
-**Scope:** Only the current week; no recurring protected periods, no automatic movement of fixed lectures or other events. Completing study time still requires explicit user action. This adds `workspace/life_planning.py`, `workspace/views/life_time.py`, `tests/test_life_planning.py`, and a three-point integration into `workspace/views/week.py`. No changes to the existing optimizer or database schema migration path are required; the Undo marker table is initialized lazily upon approval.
+- **Preview first:** generating or dismissing the proposal doesn't write to SQLite.
+- **Respect constraints:** the proposed time must be valid for the current week and can't overlap fixed commitments.
+- **Check deadlines:** changes that would violate required deadline coverage are not accepted as valid alternatives.
+- **Approve explicitly:** the personal event and its accompanying study-plan changes are saved together in one transaction.
+- **Undo carefully:** Undo is available only if the saved calendar still matches the approved state. It restores the plan and removes the protected event together.
 
-**Run focused tests:** `python -m pytest -q tests/test_life_planning.py`
+This is a **current-week, one-off** tool. It doesn't automatically reschedule future weeks or create recurring protected periods. A proposed study slot is not recorded as completed work.
 
-## Safe application and demo
-
-1. Update local `main` from `origin/main`, check for uncommitted tracked changes, then make a new feature branch.
-2. Extract `make-room-for-life-patch.zip` in the repository root, and run `python scripts/install_make_room.py`.
-3. Verify lint and tests before running the app.
-4. To demo, create a fresh DB using `python -m scripts.create_life_demo --output data/<unique-name>.db`. Set `WORKSPACE_DB_PATH` to that absolute file path in the same terminal before running Streamlit. Remove the environment variable afterwards.
-5. Merge only after reviewing `git diff`, and update local `main` again; the desktop shortcut should point to this same project folder.
-
-The ZIP intentionally omits private data, virtual environments, and entire replacements for existing application files.
+Relevant code: `workspace/life_planning.py`, `workspace/views/life_time.py`, and `tests/test_life_planning.py`.

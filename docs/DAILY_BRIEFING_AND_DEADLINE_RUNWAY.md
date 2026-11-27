@@ -1,35 +1,17 @@
-# Daily Briefing and Deadline Runway — additive Home update
+# Home briefing and upcoming deadlines
 
-This patch adds two small, data-driven Home sections without replacing the existing Home, optimizer, calendar, or desktop launcher.
+Home is meant to answer two practical questions: **what matters today?** and **what's coming up?** These panels use saved local data rather than a chatbot or a separate online service.
 
-## Daily Briefing
+## Daily briefing
 
-- Shows today's number of lectures, accepted study-session minutes, and count of nearby unfinished deadlines.
-- “Start my day” reveals the real saved agenda and nearest deadlines; it does not mark tasks done or approve a schedule.
-- The summary is deterministic and based on saved local data. It does not use an LLM or send data anywhere.
+The briefing summarizes today's agenda and upcoming work. It reads the saved events, study sessions, and tasks; viewing it doesn't complete tasks or accept a new schedule.
 
-## Deadline Runway
+## What's due next
 
-- Displays the nearest upcoming or overdue assignments within 14 days.
-- For hourly-plannable tasks, “remaining” comes from actual *timed-step* remaining minutes. A booked study session does **not** subtract from this amount.
-- Shows already accepted future study time allocated to each task and the remaining work without a slot.
-- Estimates unbooked capacity until the due date by combining explicit availability/budgets, then subtracting fixed commitments and booked study. Study budgets are respected, including already completed study time.
-- Capacity is a **shared pool** and does not guarantee that all deadlines can be satisfied. The planner may reallocate booked sessions; a simple capacity comparison is not a proof of feasibility.
-- Tasks excluded from hourly planning are labeled rather than described as unscheduled study.
-- First three deadline rows are visible; more are available inside “See more deadlines”.
+The deadline list can show the next **7, 14, or 30 days**. It initially displays three items, with an option to see more. The list highlights the task's priority and deadline alongside relevant progress or study-time information.
 
-## Install on your current main checkout
+For work represented by timed steps, remaining work means actual **unfinished minutes**, not booked calendar time. A future reserved session doesn't subtract minutes until progress is recorded. Available capacity is shared across tasks, so a simple estimate isn't proof that every deadline can be met.
 
-Extract the ZIP **into the repository root**, then run:
+The planner still handles feasibility and conflicts. Home is a quick overview, not a second scheduling engine.
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\install_home_intelligence.py
-```
-
-The installer looks for three known anchors and only adds an import and two render calls in `workspace/views/home.py`. It refuses unknown Home versions with no changes. It is safe to rerun and saves the original Home file under `data/source-backups/`.
-
-Run `ruff check .` and the full pytest suite. The new read-only features add no database migrations and no dependencies. All source is compatible with Python 3.12.
-
-## Demo
-
-Use the existing local data, or create a separate demo database with `scripts.create_rich_demo` where applicable. Start Streamlit and visit Home. The same working directory is used by the optional WebView2 desktop shortcut; no separate frontend build is required.
+Relevant code: `workspace/views/home_briefing.py`, `workspace/home_view_logic.py`, and `workspace/views/home.py`.

@@ -95,21 +95,14 @@ bounded interval model. The fallback deliberately favors a usable plan over an
 unproven claim of improvement. Capacity explanations are per-task upper bounds,
 not solver unsatisfiable cores and not checked counterfactual feasibility proofs.
 
-## Validation
+## Validation at the time of the benchmark
 
-- `python -m ruff check .`: passed.
-- `python -m ruff format --check .`: passed.
-- `python -m pytest -q`: 209 passed, 58 subtests passed.
-- `python -m scripts.check_ui`: Home and Calendar loaded on temporary data.
-- `python -m scripts.check_optimizer_ui`: goal generation/comparison, approval, Undo
-  and adding/removing prerequisites passed on a temporary database.
-- A separate localhost Streamlit process was exercised through its agent API:
-  Home, Calendar, goal generation and the five-row comparison returned ready.
-  No new server warnings or exceptions appeared. The process was stopped afterward.
-
-The AppTest runners emit the documented bare-mode Missing ScriptRunContext warning
-on their main thread. This is not an application exception. The Windows desktop
-launcher and visual/pixel layout were not manually tested in this upgrade.
+The optimizer evaluation used the approval validator and an independent minute-level
+occupancy check; no constraint violations were found in its 315 measurements.
+During that evaluation (25 November 2026), the development revision also passed
+Ruff, 209 pytest tests plus 58 subtests, and an optimizer UI check against temporary
+data. **These results belong to that dated revision**, not necessarily to the final
+repository state. For current checks, see [Testing notes](TEST_REPORT.md).
 
 ## Reproduction
 
@@ -118,6 +111,5 @@ launcher and visual/pixel layout were not manually tested in this upgrade.
 .\.venv\Scripts\python.exe -m scripts.check_optimizer_ui
 ```
 
-The existing `scripts.evaluate_rescue` benchmark remains available for the original
-greedy strategy comparison. No merge, push, deployment or personal-data migration
-was performed during implementation.
+The older `scripts.evaluate_rescue` benchmark also compares greedy strategies.
+These measurements use generated tasks; no personal database is needed.
