@@ -2,7 +2,7 @@
 
 *A task list tells you what needs doing. We wanted to figure out when to do it, too.*
 
-Personal Workspace is a local planning app we built for **Software Engineering (20875) at Bocconi University**. It brings tasks, deadlines, calendar events and study time into one place. Instead of manually fitting every assignment around lectures and other plans, you can ask it to suggest a week that actually fits your available time.
+Personal Workspace is a local planning app we built for **Software Engineering (20875)**. It brings tasks, deadlines, calendar events and study time into one place. Instead of manually fitting every assignment around lectures and other plans, you can ask it to suggest a week that actually fits your available time.
 
 It's a single-user app written in **Python 3.12**, with **Streamlit** for the interface, **SQLite** for storage, **OR-Tools CP-SAT** for scheduling and **Plotly** for charts. On Windows, it can also open in its own desktop window using pywebview/WebView2.
 
