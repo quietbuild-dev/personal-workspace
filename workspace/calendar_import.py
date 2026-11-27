@@ -19,7 +19,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from workspace.advanced_planner import PlannerSnapshot
 from workspace.advanced_repository import (
-    EVENT_KINDS,
     StaleProposalError,
     _connect,
     _fetch_snapshot,
@@ -254,8 +253,6 @@ def import_selected(
     *, kind: str = "Appointment",
 ) -> int:
     """All-or-nothing import after freshness, eligibility and pairwise conflict checks."""
-    if kind not in EVENT_KINDS:
-        raise ValueError("Choose a supported event category.")
     if not selected_keys or not isinstance(selected_keys, frozenset):
         raise ValueError("Select at least one event to import.")
     if len(selected_keys) > MAX_EVENTS:
@@ -272,6 +269,8 @@ def import_selected(
                 "source_key TEXT PRIMARY KEY, "
                 "event_id INTEGER NOT NULL REFERENCES fixed_events(id) ON DELETE CASCADE)"
             )
+            from workspace.advanced_repository import _event_category_choice
+            stored, override = _event_category_choice(conn, kind)
             latest = _fetch_snapshot(conn)
             if latest.fingerprint != expected_fingerprint:
                 raise StaleProposalError("Calendar changed. Preview the import again.")
@@ -296,8 +295,13 @@ def import_selected(
                 ).lastrowid
                 conn.execute(
                     "INSERT INTO fixed_event_kinds(event_id,kind) VALUES (?,?)",
-                    (event_id, kind),
+                    (event_id, stored),
                 )
+                if override:
+                    conn.execute(
+                        "INSERT INTO event_category_overrides(event_id,category) VALUES (?,?)",
+                        (event_id, override),
+                    )
                 conn.execute(
                     "INSERT INTO calendar_import_receipts(source_key,event_id) VALUES (?,?)",
                     (item.key, event_id),

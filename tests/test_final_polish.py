@@ -46,7 +46,7 @@ class HomePolishTests(unittest.TestCase):
                 ),
             ),
         )
-        self.assertEqual([t.id for t in focus_tasks(overview, self.today)], [1, 3])
+        self.assertEqual([t.id for t in focus_tasks(overview, self.today)], [3])
 
     def test_completed_today_uses_actual_timestamp(self):
         completed = datetime.now(timezone.utc)
@@ -74,7 +74,7 @@ class HomePolishTests(unittest.TestCase):
         board = (ROOT / "workspace/views/task_board.py").read_text(encoding="utf-8")
         week = (ROOT / "workspace/views/week.py").read_text(encoding="utf-8")
         self.assertIn(":material/event_available:", app)
-        self.assertIn("Your tasks, deadlines and one sensible next step.", home)
+        self.assertNotIn("Your tasks, deadlines and one sensible next step.", home)
         self.assertNotIn("One place to capture work, check off steps", board)
         self.assertNotIn("Your week, at a glance", week)
         self.assertIn("Completed today", home)

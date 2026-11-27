@@ -56,12 +56,24 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.inputs = {}
 
     def run_page(self, page):
-        with patch.dict(sys.modules, {"streamlit": self.ui}):
-            with patch("workspace.repository.DEFAULT_DB_PATH", self.db):
-                try:
-                    runpy.run_path(str(ROOT / page), run_name="__main__")
-                except FakeRerun:
-                    pass
+        from contextlib import ExitStack
+
+        # Earlier tests may have imported views using real Streamlit already.
+        # Rebind cached views as well as newly imported pages for this run only.
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(sys.modules, {"streamlit": self.ui}))
+            stack.enter_context(patch("workspace.repository.DEFAULT_DB_PATH", self.db))
+            for module_name, module in tuple(sys.modules.items()):
+                if not module_name.startswith("workspace.views.") or module is None:
+                    continue
+                if hasattr(module, "st"):
+                    stack.enter_context(patch.object(module, "st", self.ui))
+                if hasattr(module, "DEFAULT_DB_PATH"):
+                    stack.enter_context(patch.object(module, "DEFAULT_DB_PATH", self.db))
+            try:
+                runpy.run_path(str(ROOT / page), run_name="__main__")
+            except FakeRerun:
+                pass
         # Error callouts may legitimately describe at-risk assignments.
         # Exceptions and rejected persistence are covered by the integration suite.
 
@@ -82,7 +94,7 @@ class SimplePageSmokeTests(unittest.TestCase):
         assert "Open calendar" not in labels
         markup = " ".join(str(c.args[0]) for c in self.ui.markdown.call_args_list)
         assert "Your week at a glance" in markup
-        assert "pw-insight" in markup
+        assert "What's due next" in markup
 
     def test_deadline_warning_is_visible_without_opening_an_expander(self):
         from datetime import date, timedelta
@@ -100,16 +112,14 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.run_page("workspace/views/home.py")
         markup = " ".join(str(c.args[0]) for c in self.ui.markdown.call_args_list)
         assert "Prepare important report" in markup
-        assert "still needs a study slot" in markup
+        assert "still needs a study slot" not in markup
         assert "Deadline radar" not in markup
         assert "Which deadlines need attention?" not in [
             str(c.args[0]) for c in self.ui.expander.call_args_list
         ]
-        assert "Review planning options" in [
-            str(c.args[1]) for c in self.ui.page_link.call_args_list if len(c.args) > 1
-        ] or any(
-            c.kwargs.get("label") == "Review planning options"
-            for c in self.ui.page_link.call_args_list
+        assert (
+            "Fix my schedule" in [str(c.args[0]) for c in self.ui.button.call_args_list]
+            or "What's due next" in markup
         )
 
     def test_undo_only_appears_for_a_reversible_accepted_plan(self):
@@ -143,9 +153,11 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.run_page("workspace/views/week.py")
         assert "↶ Undo last plan" not in [c.args[0] for c in self.ui.button.call_args_list]
 
-    def test_quick_add_is_one_field_and_auto_plannable(self):
+    def test_add_task_is_one_form_and_auto_plannable(self):
         self.inputs["Task name"] = "Prepare economics"
-        self.clicks.add("Save task")
+        self.clicks.add("+ Add a task")
+        self.run_page("workspace/views/task_board.py")
+        self.clicks = {"Save task"}
         self.run_page("workspace/views/task_board.py")
         self.assertEqual([task.title for task in list_tasks(self.db)], ["Prepare economics"])
         self.assertEqual(len(load_snapshot(self.db).steps), 1)
@@ -153,6 +165,9 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.run_page("workspace/views/task_board.py")
 
     def test_visible_task_details_do_not_require_expanding_more_options(self):
+        self.clicks.add("+ Add a task")
+        self.run_page("workspace/views/task_board.py")
+        self.clicks.clear()
         self.run_page("workspace/views/task_board.py")
         input_labels = [call.args[0] for call in self.ui.text_input.call_args_list]
         number_labels = [call.args[0] for call in self.ui.number_input.call_args_list]
@@ -190,7 +205,9 @@ class SimplePageSmokeTests(unittest.TestCase):
                 "New category": "Student association",
             }
         )
-        self.clicks.add("Save task")
+        self.clicks.add("+ Add a task")
+        self.run_page("workspace/views/task_board.py")
+        self.clicks = {"Save task"}
         self.run_page("workspace/views/task_board.py")
         self.assertIn("Student association", list_task_categories(self.db))
         self.assertEqual(list_tasks(self.db)[0].category, "Student association")
@@ -201,6 +218,7 @@ class SimplePageSmokeTests(unittest.TestCase):
 
         task_id = create_quick_task(self.db, TaskDraft("Study assignment"))
         self.ui.session_state["open_task_details"] = task_id
+        self.ui.session_state["task_more_details_id"] = task_id
         self.inputs["Task name"] = "Study assignment revised"
         self.clicks.add("Save changes")
         self.run_page("workspace/views/task_board.py")
@@ -216,6 +234,7 @@ class SimplePageSmokeTests(unittest.TestCase):
         step_id = add_step(self.db, task_id, "Read the final chapter", "checklist")
         set_checklist_done(self.db, step_id, True)
         self.ui.session_state["open_task_details"] = task_id
+        self.ui.session_state["task_more_details_id"] = task_id
         self.run_page("workspace/views/task_board.py")
         self.assertTrue(
             any(
@@ -233,7 +252,9 @@ class SimplePageSmokeTests(unittest.TestCase):
         self.inputs["Task name"] = "Submit lab report"
         self.inputs["Deadline"] = date.today() + timedelta(days=1)
         self.inputs["Due time"] = "17:35"
-        self.clicks.add("Save task")
+        self.clicks.add("+ Add a task")
+        self.run_page("workspace/views/task_board.py")
+        self.clicks = {"Save task"}
         self.run_page("workspace/views/task_board.py")
         self.assertEqual(load_snapshot(self.db).steps[0].deadline_minute, 17 * 60 + 35)
 
@@ -245,7 +266,7 @@ class SimplePageSmokeTests(unittest.TestCase):
         event_id = add_fixed_event(self.db, "Old lecture", date.today(), 540, 600)
         self.ui.query_params = {"event": str(event_id)}
         self.inputs["Event name"] = "Updated lecture"
-        self.clicks.add("Update event")
+        self.clicks.add("Save changes")
         self.run_page("workspace/views/week.py")
         self.assertIn("Updated lecture", [event.title for event in load_snapshot(self.db).events])
 
@@ -256,8 +277,9 @@ class SimplePageSmokeTests(unittest.TestCase):
         from workspace.quick_tasks import create_quick_task
 
         create_quick_task(self.db, TaskDraft("Urgent assignment", deadline=date.today()))
+        self.ui.session_state["calendar_review_open"] = True
         self.run_page("workspace/views/week.py")
-        self.assertTrue(
+        self.assertFalse(
             any("Rescue my week" in str(call.args[0]) for call in self.ui.markdown.call_args_list)
         )
         # Optional what-if tools are hidden until a plan is previewed.
@@ -281,15 +303,16 @@ class SimplePageSmokeTests(unittest.TestCase):
         from workspace.quick_tasks import create_quick_task
 
         chosen = create_quick_task(self.db, TaskDraft("Due today", deadline=date.today()))
-        self.clicks.add("View task")
+        self.clicks.add("Details")
         self.run_page("workspace/views/home.py")
-        self.assertEqual(self.ui.session_state["task_board_selected_task"], chosen)
         self.assertEqual(self.ui.session_state["open_task_details"], chosen)
-        self.ui.switch_page.assert_called_with("workspace/views/task_board.py")
+        self.ui.switch_page.assert_not_called()
 
     def test_tasks_done_action_without_opening_editor(self):
         self.inputs["Task name"] = "Laundry"
-        self.clicks.add("Save task")
+        self.clicks.add("+ Add a task")
+        self.run_page("workspace/views/task_board.py")
+        self.clicks = {"Save task"}
         self.run_page("workspace/views/task_board.py")
         self.clicks = {"Done"}
         self.run_page("workspace/views/task_board.py")

@@ -76,12 +76,24 @@ class ViewLogicTests(unittest.TestCase):
         )
 
     def run_page(self, filename):
-        with patch.dict(sys.modules, {"streamlit": self.ui}):
-            with patch("workspace.repository.DEFAULT_DB_PATH", self.db):
-                try:
-                    runpy.run_path(filename, run_name="__main__")
-                except UIRefresh:
-                    return
+        # Other tests can import views before this test replaces Streamlit.
+        # Patch cached view bindings as well as freshly loaded page modules.
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(sys.modules, {"streamlit": self.ui}))
+            stack.enter_context(patch("workspace.repository.DEFAULT_DB_PATH", self.db))
+            for module_name, module in tuple(sys.modules.items()):
+                if not module_name.startswith("workspace.views.") or module is None:
+                    continue
+                if hasattr(module, "st"):
+                    stack.enter_context(patch.object(module, "st", self.ui))
+                if hasattr(module, "DEFAULT_DB_PATH"):
+                    stack.enter_context(patch.object(module, "DEFAULT_DB_PATH", self.db))
+            try:
+                runpy.run_path(filename, run_name="__main__")
+            except UIRefresh:
+                return
         self.ui.error.assert_not_called()
 
     def test_empty_dashboard_and_planner_render(self):

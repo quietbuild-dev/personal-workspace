@@ -440,7 +440,9 @@ def make_revision(
                     continue
                 cap_left = limits.get(day, SEARCH_END - SEARCH_START) - booked.get(day, 0)
                 amount = min(remainder, end - start, max(0, cap_left))
-                if amount:
+                # Never introduce a new five-/ten-minute study fragment.
+                # Tiny unscheduled remainders remain explicit shortfalls.
+                if amount >= 20:
                     slots.append(Slot(step.id, day, start, start + amount))
                     occupied.setdefault(day, []).append((start, start + amount))
                     allocated[step.id] += amount

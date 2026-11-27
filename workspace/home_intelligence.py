@@ -8,7 +8,7 @@ all deadlines are individually feasible.
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from workspace.advanced_planner import effective_windows
+from workspace.advanced_planner import effective_windows, week_bounds
 
 
 @dataclass(frozen=True)
@@ -76,20 +76,27 @@ def daily_briefing(tasks, snapshot, now: datetime) -> Briefing:
         (task for task in tasks if task.status == "pending" and task.deadline is not None),
         key=lambda t: (t.deadline, -t.priority, t.id),
     )
-    near = [t for t in pending if t.deadline <= today + timedelta(days=7)]
-    sentences = [
-        f"Today: {lecture_count} lecture{'s' if lecture_count != 1 else ''}",
-        f"{display_duration(study_minutes)} of study planned",
-    ]
-    if near:
-        noun = "deadlines" if len(near) != 1 else "deadline"
-        sentences.append(f"{len(near)} approaching or overdue {noun}")
-    else:
-        sentences.append("no deadlines within seven days")
-    summary = ", ".join(sentences) + "."
-    afternoon = sum(max(0, min(end, 18 * 60) - max(start, 12 * 60)) for start, end, _, _ in agenda)
-    if afternoon >= 180:
-        summary += " Your afternoon has at least 3h of booked commitments."
+    _, sunday = week_bounds(today)
+    approaching = [t for t in pending if today <= t.deadline <= sunday]
+    # Say only what is actually booked, without awkward "0 lectures" or "0m" lines.
+    today_items = []
+    if lecture_count:
+        today_items.append(f"{lecture_count} lecture{'s' if lecture_count != 1 else ''}")
+    if study_minutes:
+        today_items.append(f"{display_duration(study_minutes)} of study planned")
+    other_count = sum(kind not in ("Lecture", "Study") for _, _, _, kind in agenda)
+    if other_count:
+        today_items.append(f"{other_count} other plan{'s' if other_count != 1 else ''}")
+    summary = (
+        "Today: " + ", ".join(today_items) + "."
+        if today_items
+        else "Nothing booked on your calendar today."
+    )
+    if approaching:
+        summary += (
+            f"\n\n{len(approaching)} deadline{'s' if len(approaching) != 1 else ''} due by Sunday."
+        )
+    near = approaching
     upcoming = tuple(f"{task.title} ({_due_phrase(task.deadline, today)})" for task in near[:3])
     return Briefing(summary, tuple(agenda), upcoming)
 
@@ -175,7 +182,7 @@ def available_study_minutes(snapshot, now: datetime, deadline: date, deadline_mi
     return total
 
 
-def deadline_runway(tasks, snapshot, now: datetime, *, days_ahead=14, max_items=5):
+def deadline_runway(tasks, snapshot, now: datetime, *, days_ahead=7, max_items=5):
     """Upcoming tasks and their true remaining work, reserved time and shared capacity."""
     if not 1 <= days_ahead <= 60:
         raise ValueError("days_ahead must be between 1 and 60")
@@ -187,10 +194,11 @@ def deadline_runway(tasks, snapshot, now: datetime, *, days_ahead=14, max_items=
             steps_by_task.setdefault(step.task_id, []).append(step)
     selected = sorted(
         (
-            task for task in tasks
+            task
+            for task in tasks
             if task.status == "pending"
             and task.deadline is not None
-            and task.deadline <= last_day
+            and today <= task.deadline <= last_day
         ),
         key=lambda task: (task.deadline, -task.priority, task.id),
     )[:max_items]
@@ -215,10 +223,13 @@ def deadline_runway(tasks, snapshot, now: datetime, *, days_ahead=14, max_items=
             if session.status == "planned"
             and session.step_id in allowed_step_ids
             and (session.day > today or (session.day == today and session.start >= current_minute))
-            and (session.day < task.deadline or (
-                session.day == task.deadline
-                and (deadline_minute is None or session.end <= deadline_minute)
-            ))
+            and (
+                session.day < task.deadline
+                or (
+                    session.day == task.deadline
+                    and (deadline_minute is None or session.end <= deadline_minute)
+                )
+            )
         )
         reserved = min(remaining, reserved)
         # No known timed step means the task is tracked as a legacy daily task:

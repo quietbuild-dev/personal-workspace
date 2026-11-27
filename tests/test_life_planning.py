@@ -82,7 +82,7 @@ def test_accept_and_undo_restore_both_event_and_sessions(tmp_path):
 
 def test_fixed_event_overlap_cannot_be_moved(tmp_path):
     db, _, _ = prepared_db(tmp_path)
-    add_fixed_event(db, "Dinner", FRIDAY, 18 * 60, 19 * 60, "Social")
+    add_fixed_event(db, "Class", FRIDAY, 18 * 60, 19 * 60, "Lecture")
     with pytest.raises(ValueError, match="fixed commitment"):
         preview_time_protection(load_snapshot(db), NOW, FRIDAY, 17 * 60, 21 * 60)
 
@@ -154,3 +154,13 @@ def test_demo_generator_creates_separate_reversible_scenario(tmp_path):
     assert any(event.kind == "Social" for event in snapshot.events)
     with pytest.raises(ValueError, match="existing file"):
         create_demo(db, NOW)
+
+
+def test_social_commitments_allowed_inside_protected_time(tmp_path):
+    db, task, _ = prepared_db(tmp_path)
+    add_fixed_event(db, "Dinner", FRIDAY, 18 * 60, 19 * 60, "Social")
+    preview = preview_time_protection(
+        load_snapshot(db), NOW, FRIDAY, 17 * 60, 21 * 60,
+        required_ids=frozenset({task.id}),
+    )
+    assert preview.feasible, preview.explanation

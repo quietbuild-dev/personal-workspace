@@ -54,7 +54,7 @@ class LavenderThemeTests(unittest.TestCase):
         self.assertEqual(today.year, 2026)
         calendar_source = (ROOT / "workspace/views/weekly_calendar.py").read_text(encoding="utf-8")
         self.assertIn("CALENDAR_CSS", calendar_source)
-        self.assertIn("wp-block wp-{kind}", calendar_source)
+        self.assertIn("wp-short", calendar_source)
         self.assertIn("#655875", CALENDAR_CSS)
         self.assertIn("#BAA9D0", GLOBAL_CSS)
 
@@ -74,11 +74,10 @@ class LavenderThemeTests(unittest.TestCase):
             "workspace/views/home.py",
             "workspace/views/week.py",
             "workspace/views/task_board.py",
-            "workspace/views/tasks.py",
-            "workspace/views/planner.py",
         ):
             self.assertIn(route, app)
         self.assertIn('position="top"', app)
+        self.assertNotIn('"Advanced":', app)
 
 
 if __name__ == "__main__":

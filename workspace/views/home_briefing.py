@@ -1,104 +1,123 @@
 """Two compact, read-only Home panels: daily briefing and deadline runway."""
 
 from datetime import datetime
+from html import escape
 
 import streamlit as st
 
 from workspace.home_intelligence import daily_briefing, deadline_runway, display_duration
+from workspace.task_progress import (
+    ProgressPreference,
+    progress_details,
+)
 
 
 def render_daily_briefing(overview, now: datetime) -> None:
     summary = daily_briefing(overview.tasks, overview.advanced, now)
-    with st.container(border=True):
+    # Only the two useful facts, stacked. No duplicate agenda or deadlines list.
+    sentences = summary.text.split("\n\n")
+    todays_facts = sentences[0].removeprefix("Today: ")
+    with st.container(border=True, key="home_daily_briefing"):
         st.markdown("#### Your daily briefing")
-        st.write(summary.text)
-        opened = bool(st.session_state.get("daily_briefing_open", False))
-        if st.button(
-            "Close today's agenda" if opened else "Start my day",
-            key="daily_briefing_toggle",
-            type="secondary" if opened else "primary",
-        ):
-            opened = not opened
-            st.session_state["daily_briefing_open"] = opened
-        if opened:
-            if summary.agenda:
-                st.markdown("**Today's calendar**")
-                for start, end, label, kind in summary.agenda[:8]:
-                    st.markdown(
-                        f"**{start // 60:02d}:{start % 60:02d}–"
-                        f"{end // 60:02d}:{end % 60:02d}** · "
-                        f"{label} · {kind}"
-                    )
-                if len(summary.agenda) > 8:
-                    st.caption(f"+{len(summary.agenda) - 8} more calendar items")
-            else:
-                st.caption("No calendar events or study blocks booked for today.")
-            if summary.upcoming:
-                st.markdown("**Coming up**")
-                for title in summary.upcoming:
-                    st.caption(title)
-            st.page_link("workspace/views/week.py", label="Open today's calendar")
+        st.markdown(
+            f'<div class="pw-briefing-facts">{escape(todays_facts)}</div>',
+            unsafe_allow_html=True,
+        )
+        if len(sentences) > 1:
+            st.markdown(
+                f'<div class="pw-briefing-deadlines">{escape(sentences[1])}</div>',
+                unsafe_allow_html=True,
+            )
+        if st.button("Start my day", key="daily_briefing_open_calendar", type="primary"):
+            st.session_state["calendar_view"] = "Day"
+            st.session_state["calendar_browse_date"] = now.date()
+            st.switch_page("workspace/views/week.py")
 
 
-def _runway_row(item) -> None:
+def _runway_row(item, task, task_actions=None, checklist=(), preference=None) -> None:
     due = (
-        f"{abs(item.days_left)}d overdue"
-        if item.days_left < 0
-        else "Today"
+        "Today"
         if item.days_left == 0
         else "Tomorrow"
         if item.days_left == 1
         else f"{item.deadline:%d %b}"
     )
-    st.markdown(f"**{item.title}** · {due}")
-    st.progress(item.done_percent / 100, text=f"{item.done_percent}% work completed")
-    if not item.plannable:
-        st.caption(
-            f"{display_duration(item.remaining_minutes)} remaining · "
-            "Not enrolled in hourly study planning"
-        )
-        return
-    st.caption(
-        f"{display_duration(item.remaining_minutes)} remaining · "
-        f"{display_duration(item.reserved_minutes)} on calendar · "
-        f"{display_duration(item.needs_slot_minutes)} still needs a study slot"
+    label = f"{due} · {display_duration(item.remaining_minutes)} left"
+    ratio = max(0, min(100, item.done_percent))
+    if task is not None:
+        ratio, _ = progress_details(task, checklist, preference=preference)
+    st.markdown(
+        '<div class="pw-home-due-row">'
+        '<div class="pw-home-due-line">'
+        f"<strong>{escape(item.title)}</strong>"
+        f"<span>{escape(label)}</span>"
+        "</div>"
+        '<div class="pw-home-due-progress">'
+        f"<span>{ratio}% complete</span>"
+        '<div class="pw-home-due-track">'
+        f'<i style="width:{ratio}%"></i></div></div></div>',
+        unsafe_allow_html=True,
     )
-    if item.days_left < 0:
-        st.caption("Deadline passed; review this task.")
-    elif not item.capacity_configured:
-        st.caption("Set study availability in Calendar to estimate free time.")
-    else:
-        st.caption(
-            f"{display_duration(item.open_capacity_minutes)} unbooked study capacity "
-            "before this deadline (shared across all tasks)."
-        )
-        if item.needs_slot_minutes > item.open_capacity_minutes:
-            st.warning(
-                "Remaining unscheduled work exceeds currently open study capacity. "
-                "Review your plan."
+    if task_actions is not None and task is not None:
+        task_actions(task)
+    if (
+        item.plannable
+        and item.capacity_configured
+        and (item.needs_slot_minutes > item.open_capacity_minutes)
+    ):
+        st.caption("More time may be needed before this deadline.")
+
+
+def render_deadline_runway(
+    overview,
+    now: datetime,
+    *,
+    task_actions=None,
+    progress_preferences=None,
+) -> None:
+    with st.container(border=True, key="home_due_next"):
+        st.markdown("#### What's due next")
+        horizon = (
+            st.segmented_control(
+                "Upcoming deadlines",
+                [7, 14, 30],
+                default=7,
+                format_func=lambda days: f"{days} days",
+                key="due_next_days",
+                label_visibility="collapsed",
             )
-
-
-def render_deadline_runway(overview, now: datetime) -> None:
-    items = deadline_runway(overview.tasks, overview.advanced, now, max_items=8)
-    with st.container(border=True):
-        st.markdown("#### Deadline runway")
-        st.caption("Recorded progress and available study capacity for the next 14 days")
-        if not items:
-            st.caption("No pending deadlines in the next 14 days.")
-            return
-        for index, item in enumerate(items[:3]):
-            if index:
-                st.divider()
-            _runway_row(item)
-        if len(items) > 3:
-            with st.expander(f"See {len(items) - 3} more deadlines", expanded=False):
-                for index, item in enumerate(items[3:]):
-                    if index:
-                        st.divider()
-                    _runway_row(item)
-        st.caption(
-            "Booked study is not completed work. Free capacity is shared by tasks, "
-            "so these figures do not guarantee that every deadline is feasible."
+            or 7
         )
-        st.page_link("workspace/views/task_board.py", label="View all tasks")
+        items = deadline_runway(
+            overview.tasks,
+            overview.advanced,
+            now,
+            days_ahead=horizon,
+            max_items=100,
+        )
+        if not items:
+            st.caption(f"No upcoming deadlines in the next {horizon} days.")
+            return
+        tasks_by_id = {task.id: task for task in overview.tasks}
+        steps_by_task = {}
+        if getattr(overview, "advanced", None) is not None:
+            for step in overview.advanced.steps:
+                if step.kind == "checklist":
+                    steps_by_task.setdefault(step.task_id, []).append(step)
+        prefs = progress_preferences or {}
+        expanded = st.session_state.get("home_all_deadlines", False)
+        visible = items if expanded else items[:3]
+        for item in visible:
+            _runway_row(
+                item,
+                tasks_by_id.get(item.task_id),
+                task_actions,
+                steps_by_task.get(item.task_id, ()),
+                prefs.get(item.task_id, ProgressPreference()),
+            )
+        if len(items) > 3:
+            label = "Show fewer deadlines" if expanded else f"Show {len(items) - 3} more deadlines"
+            if st.button(label, key="home_toggle_deadlines"):
+                st.session_state["home_all_deadlines"] = not expanded
+                st.rerun()
+        st.page_link("workspace/views/task_board.py", label="All tasks")

@@ -15,6 +15,7 @@ from workspace.advanced_repository import (
     list_task_due_times,
     set_checklist_done,
 )
+from workspace.categories import category_colors, create_category
 from workspace.deadline_guarantees import check_required_coverage
 from workspace.home_view_logic import completed_today, due_display, focus_tasks
 from workspace.manual_planning import move_proposed_block
@@ -38,18 +39,19 @@ from workspace.study_dna import (
     task_is_required,
 )
 from workspace.subtask_input import parse_subtasks
+from workspace.task_modes import is_simple_task, load_task_modes, save_task_mode
 from workspace.task_progress import (
-    MODE_LABELS,
     ProgressPreference,
     load_progress_preferences,
     progress_html,
     save_progress_preference,
+    tracking_choice,
 )
 from workspace.theme import insight_card, priority_badge, stat_card
 from workspace.views.home_briefing import render_daily_briefing, render_deadline_runway
 from workspace.views.settings import render_form
 from workspace.views.weekly_replay import render_weekly_replay
-from workspace.workload_summary import COLORS, ORDER, workload_breakdown
+from workspace.workload_summary import workload_breakdown
 
 PRIORITIES = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -102,13 +104,28 @@ def _category_input(categories: tuple[str, ...], key: str, *, selected="Personal
         key=f"{key}_category_choice",
     )
     if choice == "+ New category":
-        return st.text_input(
+        value = st.text_input(
             "New category",
-            placeholder="e.g. Student association",
+            placeholder="e.g. Volunteering",
             max_chars=40,
             key=f"{key}_new_category",
         )
+        return value.strip()
+
     return choice
+
+
+def _save_progress_preference_and_close(task_id: int, mode: str, percent: int) -> None:
+    """Persist the display choice and close the editor on both Home and Tasks."""
+    save_progress_preference(DEFAULT_DB_PATH, task_id, mode, int(percent))
+    for key in (
+        "partial_task_id",
+        "open_task_details",
+        "home_quick_progress",
+        "home_details_origin",
+        "task_more_details_id",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _duration_input(key: str, *, minutes: int = 60) -> int:
@@ -139,63 +156,99 @@ def _new_task(categories: tuple[str, ...]) -> None:
     with st.container(border=True):
         st.subheader("Add a task")
         category = _category_input(categories, f"new_{rev}")
+        tracking = st.radio(
+            "Track progress with",
+            ["Progress bar", "Subtasks", "Simple to-do"],
+            horizontal=True,
+            index=0,
+            key=f"new_style_{rev}",
+        )
+        is_todo = tracking == "Simple to-do"
         with st.form(f"new_task_{rev}"):
             title = st.text_input("Task name", placeholder="e.g. Finish economics assignment")
+            due = st.date_input(
+                "Deadline",
+                value=None,
+                format="DD/MM/YYYY",
+                key=f"new_due_{rev}",
+            )
             left, right = st.columns(2, gap="small")
             with left:
-                due = st.date_input(
-                    "Deadline",
-                    value=None,
-                    format="DD/MM/YYYY",
-                    key=f"new_due_{rev}",
-                )
+                if is_todo:
+                    estimate = 15  # Internal placeholder; never shown as task progress.
+                else:
+                    st.caption("Estimated time")
+                    estimate = _duration_input(f"new_{rev}")
             with right:
+                priority = st.selectbox("Priority", list(PRIORITIES), index=1)
+            if tracking == "Subtasks":
+                subtasks = st.text_area(
+                    "Subtasks (one per line)",
+                    placeholder="Find sources\nWrite first draft\nCheck references",
+                    key=f"new_subtasks_{rev}",
+                    height=85,
+                )
+            with st.expander("More details (optional)", expanded=False):
                 due_time = st.text_input(
                     "Due time",
-                    placeholder="hh:mm",
+                    placeholder="e.g. 11:05",
+                    help="24-hour time, including any minute from 00 to 59.",
                     max_chars=5,
                     key=f"new_due_time_{rev}",
                 )
-            left, right = st.columns(2, gap="small")
-            with left:
-                st.caption("Estimated time")
-                estimate = _duration_input(f"new_{rev}")
-            with right:
-                priority = st.selectbox("Priority", list(PRIORITIES), index=1)
-            schedule = st.checkbox(
-                "Add study time to my calendar",
-                value=True,
-                help="Uncheck for errands or tasks you don't want to schedule.",
-            )
-            must_finish = st.checkbox(
-                "Must finish by deadline",
-                value=True,
-                help="Leave checked for exams or submissions. Uncheck for optional work.",
-            )
-            subtasks = st.text_area(
-                "Subtasks (optional)",
-                placeholder="e.g. Find sources\nWrite first draft\nCheck references",
-                help="One item per line. You can add or check them off later.",
-                key=f"new_subtasks_{rev}",
-                height=85,
-            )
+                schedule = (
+                    False
+                    if is_todo
+                    else st.checkbox(
+                        "Add study time to my calendar",
+                        value=True,
+                        help="Uncheck for errands or tasks you don't want to schedule.",
+                    )
+                )
+                must_finish = (
+                    False
+                    if is_todo
+                    else st.checkbox(
+                        "Must finish by deadline",
+                        value=True,
+                        help="Leave checked for exams or submissions. Uncheck for optional work.",
+                    )
+                )
+                if tracking != "Subtasks":
+                    subtasks = st.text_area(
+                        "Subtasks (optional)",
+                        placeholder="e.g. Find sources\nWrite first draft\nCheck references",
+                        help="These won't change your selected progress method.",
+                        key=f"new_subtasks_{rev}",
+                        height=85,
+                    )
             submitted = st.form_submit_button("Save task", type="primary")
         if submitted:
 
             def save():
-                lines = parse_subtasks(subtasks)
+                lines = parse_subtasks(subtasks, required=(tracking == "Subtasks"))
+                saved_category = create_category(DEFAULT_DB_PATH, category)
                 new_id = create_quick_task(
                     DEFAULT_DB_PATH,
-                    TaskDraft(title, category, due, PRIORITIES[priority], estimate),
+                    TaskDraft(title, saved_category, due, PRIORITIES[priority], estimate),
                     due_minute=parse_due_clock(due_time),
                     schedule=schedule,
                 )
                 if due is not None:
                     set_required(DEFAULT_DB_PATH, new_id, bool(must_finish))
+                save_task_mode(DEFAULT_DB_PATH, new_id, "simple" if is_todo else "progress")
+                if not is_todo:
+                    save_progress_preference(
+                        DEFAULT_DB_PATH,
+                        new_id,
+                        "checklist" if tracking == "Subtasks" else "manual",
+                        0,
+                    )
                 for line in lines:
                     add_step(DEFAULT_DB_PATH, new_id, line, "checklist")
                 st.session_state["newly_added_task"] = new_id if schedule else None
                 st.session_state["new_task_version"] = rev + 1
+                st.session_state["task_add_open"] = False
                 st.session_state.pop("home_adjusted_proposal", None)
 
             _apply(save, "Task saved.")
@@ -255,7 +308,7 @@ def _suggestion(overview, now: datetime, newly_added: int | None) -> None:
             st.rerun()
         with st.popover("Change a suggested time"):
             from workspace.advanced_planner import week_bounds as clock
-            from workspace.views.week import TIME_CHOICES, _as_minute
+            from workspace.views.week import TIME_CHOICES, _as_minute, _time_index
 
             choices = [
                 (i, slot)
@@ -278,7 +331,7 @@ def _suggestion(overview, now: datetime, newly_added: int | None) -> None:
                     max_value=revision.sunday,
                     format="DD/MM/YYYY",
                 )
-                new_start = st.selectbox("Start time", TIME_CHOICES[:-1], index=18)
+                new_start = st.selectbox("Start time", TIME_CHOICES[:-1], index=_time_index(9 * 60))
                 if st.form_submit_button("Preview new time"):
                     try:
                         adjusted = move_proposed_block(
@@ -338,79 +391,121 @@ def _personalized_nudge(overview, today: date, profile) -> str | None:
         if item.status == "planned" and today <= item.day <= sunday
     ]
     if not sessions:
-        return (
-            "Your tasks are ready, but this week's calendar has no accepted study blocks. "
-            "Plan my week can help you find a starting point."
-            if any(t.status == "pending" for t in overview.tasks)
-            else None
-        )
+        return None
     if profile is not None and profile.focus_window is not None:
         lo, hi = profile.focus_window
         total = sum(item.end - item.start for item in sessions)
         preferred = sum(max(0, min(item.end, hi) - max(item.start, lo)) for item in sessions)
         if total >= 90 and preferred * 3 < total:
-            return (
-                "Most upcoming study time falls outside your strongest concentration hours. "
-                "A new preview can look for a closer fit around your commitments."
-            )
+            return "Most booked study falls outside your preferred hours."
     by_day = {}
     for item in sessions:
         by_day[item.day] = by_day.get(item.day, 0) + item.end - item.start
     busiest = max(by_day, key=by_day.get)
     if by_day[busiest] >= 240 and by_day[busiest] * 2 > sum(by_day.values()):
-        return (
-            f"{busiest:%A} is doing the heavy lifting: "
-            f"{pretty_duration(by_day[busiest])} booked. "
-            "The balanced plan could spread that load if other days have room."
-        )
+        return f"{busiest:%A} has {pretty_duration(by_day[busiest])} of study booked."
     return None
 
 
 def _weekly_workload(overview, today: date) -> str:
-    """Color-coded stacked week: accepted study and fixed calendar obligations."""
-    rows = workload_breakdown(overview.advanced, today)
+    """Seamless rectangular category stacks with compact readable durations."""
+    palette = category_colors(DEFAULT_DB_PATH)
+    rows = workload_breakdown(overview.advanced, today, palette)
+    ordered = tuple(kind for kind in palette if any(day[kind] for day in rows.values()))
     peak = max(120, *(sum(parts.values()) for parts in rows.values()))
     bars = []
     for day, parts in rows.items():
-        study = parts["Study"]
-        commitments = sum(minutes for kind, minutes in parts.items() if kind != "Study")
-        booked = study + commitments
+        booked = sum(parts.values())
         segments = []
-        for kind in ORDER:
+        for kind in ordered:
             minutes = parts[kind]
             if minutes:
                 height = round(100 * minutes / peak, 2)
                 segments.append(
                     '<div class="pw-workbar-segment" tabindex="0" '
-                    f'aria-label="{kind} {pretty_duration(minutes)}" '
-                    f'style="height:{height}%;background:{COLORS[kind]}">'
+                    f'aria-label="{escape(kind)} {pretty_duration(minutes)}" '
+                    f'style="height:{height}%;background:{palette[kind]}">'
                     f'<span class="pw-workbar-tooltip" aria-hidden="true">'
-                    f'{kind} {pretty_duration(minutes)}</span>'
-                    "</div>"
+                    f"{escape(kind)} {pretty_duration(minutes)}</span></div>"
                 )
-        # Only literal color constants and integer-derived dimensions enter HTML.
         bars.append(
             '<div class="pw-workday">'
-            f'<div class="pw-workbar-track" role="group" aria-label="{day:%A}: '
-            f'{study / 60:g} study hours and {commitments / 60:g} other hours">'
+            f'<div class="pw-workbar-track" role="group" '
+            f'aria-label="{day:%A}: {pretty_duration(booked)} booked">'
             + "".join(segments)
             + "</div>"
             + f'<div class="pw-workday-label">{day:%a}</div>'
             + '<div class="pw-workday-value">'
-            + (f"{booked / 60:g}h" if booked else "—")
+            + (pretty_duration(booked) if booked else "—")
             + "</div></div>"
         )
     legend = "".join(
-        '<span><i style="background:' + COLORS[kind] + '"></i>' + kind + "</span>" for kind in ORDER
+        '<span><i style="background:' + palette[kind] + '"></i>' + escape(kind) + "</span>"
+        for kind in ordered
     )
     return (
         '<div class="pw-card"><h3>Your week at a glance</h3>'
-        '<p class="pw-section-note">Booked hours by category</p>'
         '<div class="pw-legend">' + legend + "</div>"
-        '<div class="pw-workload">' + "".join(bars) + "</div>"
-        '<p class="pw-section-note">Booked hours, not free time. '
-        "Overlapping events may add up.</p></div>"
+        '<div class="pw-workload">' + "".join(bars) + "</div></div>"
     )
+
+
+def _task_checklist(overview, task, *, key_prefix: str, interactive: bool = True) -> bool:
+    """Show stored subtasks at the task, rather than hiding them behind More details.
+
+    Updating a checkbox changes only that checklist step. It never marks the
+    parent task complete or changes its remaining study minutes.
+    """
+    steps = getattr(getattr(overview, "advanced", None), "steps", ())
+    items = [step for step in steps if step.task_id == task.id and step.kind == "checklist"]
+    if not items:
+        return False
+    checked_count = sum(bool(item.checked) for item in items)
+    st.caption(f"Subtasks · {checked_count}/{len(items)} completed")
+    for item in items:
+        if interactive and task.status == "pending":
+            checked = st.checkbox(
+                item.title,
+                value=bool(item.checked),
+                key=f"{key_prefix}_subtask_{task.id}_{item.id}",
+            )
+            if checked != bool(item.checked):
+                _apply(
+                    lambda step_id=item.id, value=checked: set_checklist_done(
+                        DEFAULT_DB_PATH, step_id, value
+                    ),
+                    "Subtask updated.",
+                )
+        else:
+            st.markdown(f"{'✓' if item.checked else '○'} {escape(item.title)}")
+    return True
+
+
+def _remember_task_done(task) -> None:
+    """Keep the previous remaining estimate available for an immediate Undo."""
+    toggle_quick_task(DEFAULT_DB_PATH, task.id, True)
+    st.session_state["just_completed_task"] = (task.id, task.title, task.remaining_minutes)
+    for key in (
+        "open_task_details",
+        "task_more_details_id",
+        "home_quick_progress",
+        "home_details_origin",
+        "partial_task_id",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _reopen_task(task) -> None:
+    """Undo an immediate completion exactly; otherwise offer normal reopening."""
+    recent = st.session_state.get("just_completed_task")
+    if recent and recent[0] == task.id and recent[2] > 0:
+        restore_just_completed_task(DEFAULT_DB_PATH, task.id, recent[2])
+    else:
+        toggle_quick_task(DEFAULT_DB_PATH, task.id, False)
+    if recent and recent[0] == task.id:
+        st.session_state.pop("just_completed_task", None)
+    for key in ("open_task_details", "task_more_details_id", "home_quick_progress"):
+        st.session_state.pop(key, None)
 
 
 def _view_task(task_id: int) -> None:
@@ -420,96 +515,176 @@ def _view_task(task_id: int) -> None:
     st.switch_page("workspace/views/task_board.py")
 
 
-def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
-    """A day-specific focus list, completed work below, and upcoming deadlines."""
-    pending = [task for task in overview.tasks if task.status == "pending"]
-    pending.sort(
-        key=lambda task: (task.deadline is None, task.deadline or date.max, -task.priority, task.id)
+def _home_task_actions(task, overview, *, key_prefix="home") -> None:
+    """Quick actions remain on Home; no trip to the Tasks page required."""
+    if overview is not None and st.session_state.get("open_task_details") != task.id:
+        items = tuple(
+            step
+            for step in getattr(getattr(overview, "advanced", None), "steps", ())
+            if step.task_id == task.id and step.kind == "checklist"
+        )
+        if (
+            tracking_choice(
+                task,
+                load_task_modes(DEFAULT_DB_PATH).get(task.id),
+                load_progress_preferences(DEFAULT_DB_PATH).get(task.id),
+                items,
+            )
+            == "Subtasks"
+        ):
+            _task_checklist(overview, task, key_prefix=key_prefix)
+    done, progress, details, _space = st.columns([1, 1.25, 1.1, 2.0], gap="small")
+    if done.button("Done", key=f"{key_prefix}_done_{task.id}", width="stretch"):
+        _apply(lambda: _remember_task_done(task), "Task done")
+    items = tuple(
+        step
+        for step in getattr(getattr(overview, "advanced", None), "steps", ())
+        if step.task_id == task.id and step.kind == "checklist"
     )
-    soon = [
-        task
-        for task in pending
-        if task.deadline is not None and today <= task.deadline <= today + timedelta(days=7)
-    ]
-    progress_preferences = load_progress_preferences(DEFAULT_DB_PATH)
-    checklist_by_task = {}
-    timed_by_task = {}
-    for step in overview.advanced.steps:
-        if step.kind == "checklist":
-            checklist_by_task.setdefault(step.task_id, []).append(step)
-        elif step.kind == "timed":
-            timed_by_task.setdefault(step.task_id, []).append(step)
+    user_mode = load_task_modes(DEFAULT_DB_PATH).get(task.id)
+    user_pref = load_progress_preferences(DEFAULT_DB_PATH).get(task.id)
+    shown_mode = tracking_choice(task, user_mode, user_pref, items)
+    if progress.button(
+        "Subtasks" if shown_mode == "Subtasks" else "Progress",
+        key=f"{key_prefix}_progress_{task.id}",
+        width="stretch",
+    ):
+        already_open = (
+            st.session_state.get("open_task_details") == task.id
+            and st.session_state.get("home_details_origin") == key_prefix
+            and st.session_state.get("home_quick_progress") == task.id
+        )
+        if already_open:
+            st.session_state.pop("open_task_details", None)
+            st.session_state.pop("home_quick_progress", None)
+            st.session_state.pop("home_details_origin", None)
+        else:
+            st.session_state["open_task_details"] = task.id
+            st.session_state["home_details_origin"] = key_prefix
+            st.session_state["home_quick_progress"] = task.id
+            st.session_state.pop("task_more_details_id", None)
+        st.rerun()
+    if details.button("Details", key=f"{key_prefix}_details_{task.id}", width="stretch"):
+        already_open = (
+            st.session_state.get("open_task_details") == task.id
+            and st.session_state.get("home_details_origin") == key_prefix
+            and st.session_state.get("home_quick_progress") != task.id
+        )
+        if already_open:
+            st.session_state.pop("open_task_details", None)
+            st.session_state.pop("home_details_origin", None)
+        else:
+            st.session_state["open_task_details"] = task.id
+            st.session_state["home_details_origin"] = key_prefix
+        st.session_state.pop("home_quick_progress", None)
+        st.session_state.pop("task_more_details_id", None)
+        st.rerun()
+    # Render directly under this task rather than at the end of the whole section.
+    if (
+        overview is not None
+        and st.session_state.get("open_task_details") == task.id
+        and st.session_state.get("home_details_origin") == key_prefix
+    ):
+        _edit_task(
+            overview,
+            tuple(category_colors(DEFAULT_DB_PATH)),
+            list_task_due_times(DEFAULT_DB_PATH),
+        )
 
-    left, right = st.columns([1.18, 0.82], gap="large")
+
+def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> None:
+    """Today's due/scheduled work alongside unscheduled errands without deadlines."""
+    left, right = st.columns([1.1, 0.9], gap="medium")
     with left:
         with st.container(border=True):
-            st.markdown("### Today’s focus")
-            st.caption("Due today, overdue, or on today's study schedule")
+            st.markdown("### Today's focus")
             focused = focus_tasks(overview, today)
             if not focused:
-                st.caption("No unfinished tasks due or scheduled for today.")
-            for index, task in enumerate(focused):
-                details, action = st.columns([4.4, 1.3], gap="small")
-                with details:
-                    st.markdown(
-                        '<div class="pw-task-head">'
-                        f'<div class="pw-task-title">{escape(task.title)}</div>'
-                        f"{priority_badge(task.priority)}</div>"
-                        '<div class="pw-task-meta">'
-                        f"{escape(task.category)} · "
-                        f"{escape(due_display(task, deadline_times, today))} · "
-                        f"{pretty_duration(task.remaining_minutes)} remaining</div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        progress_html(
-                            task,
-                            checklist_by_task.get(task.id, []),
-                            timed_by_task.get(task.id, []),
-                            progress_preferences.get(task.id),
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                with action:
-                    if st.button("View task", key=f"focus_view_{task.id}", width="stretch"):
-                        _view_task(task.id)
-                if index < len(focused) - 1:
-                    st.divider()
-        done_today = completed_today(overview, today)
-        with st.expander(f"Completed today ({len(done_today)})", expanded=False):
-            if done_today:
-                for task in done_today:
-                    st.markdown(f"✓ {escape(task.title)}")
-            else:
-                st.caption("Completed tasks will appear here as you finish them.")
+                st.caption("Nothing urgent on your list today.")
+            for task in focused:
+                st.markdown(
+                    '<div class="pw-home-task-name" style="margin:10px 0 3px">'
+                    f"{escape(task.title)}</div>"
+                    '<div class="pw-home-task-meta" style="margin:0 0 5px">'
+                    f"{escape(task.category)} · "
+                    f"{escape(due_display(task, deadline_times, today))}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                # Today's Focus is deliberately a plain list. Checklist controls
+                # live in Tasks; completion appears in Completed Today below.
+                st.markdown(
+                    '<div style="border-bottom:1px solid #393640;margin:9px 0"></div>',
+                    unsafe_allow_html=True,
+                )
     with right:
-        due = [
-            '<div class="pw-card"><h3>Upcoming deadlines</h3>',
-            '<p class="pw-section-note">The next seven days</p>',
-        ]
-        for task in soon[:3]:
-            due.extend(
-                [
-                    '<div class="pw-task-preview"><div class="pw-task-head">',
-                    f'<div class="pw-task-title">{escape(task.title)}</div>',
-                    priority_badge(task.priority),
-                    '</div><div class="pw-task-meta">',
-                    escape(due_display(task, deadline_times, today)),
-                    "</div>",
-                    progress_html(
-                        task,
-                        checklist_by_task.get(task.id, []),
-                        timed_by_task.get(task.id, []),
-                    ),
-                    "</div>",
-                ]
+        with st.container(border=True):
+            st.markdown("### To-do")
+            no_deadline = sorted(
+                (
+                    task
+                    for task in overview.tasks
+                    if task.status == "pending" and task.deadline is None
+                ),
+                key=lambda task: (-task.priority, task.id),
             )
-        if not soon:
-            due.append('<p class="pw-section-note">No deadlines in the next seven days.</p>')
-        due.append("</div>")
-        if len(soon) > 3:
-            due.append(f'<p class="pw-section-note">And {len(soon) - 3} more in Tasks.</p>')
-        st.markdown("".join(due), unsafe_allow_html=True)
+            if not no_deadline:
+                st.caption("No open to-dos without deadlines.")
+            show_all_todos = st.session_state.get("home_all_todos", False)
+            for task in no_deadline if show_all_todos else no_deadline[:5]:
+                st.markdown(
+                    f'<div class="pw-home-task-name">{escape(task.title)}</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div class="pw-home-task-meta">{escape(task.category)}</div>',
+                    unsafe_allow_html=True,
+                )
+                _home_task_actions(task, overview)
+            if len(no_deadline) > 5:
+                label = (
+                    "Show fewer to-dos"
+                    if show_all_todos
+                    else f"Show {len(no_deadline) - 5} more to-dos"
+                )
+                if st.button(label, key="home_toggle_todos"):
+                    st.session_state["home_all_todos"] = not show_all_todos
+                    st.rerun()
+    # Task details are rendered inline by _home_task_actions, next to their task.
+    done_today = completed_today(overview, today)
+    with st.container(border=True):
+        st.markdown(f"### Completed today  ·  {len(done_today)}")
+        if not done_today:
+            st.caption("Finished tasks appear here.")
+        else:
+            show_all_done = st.session_state.get("home_all_completed", False)
+            visible = done_today if show_all_done else done_today[:3]
+            for task in visible:
+                label, undo = st.columns([8, 1], vertical_alignment="center")
+                with label:
+                    st.markdown(
+                        '<div class="pw-completed-row"><span class="pw-done-tick">✓</span>'
+                        f"<span>{escape(task.title)}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                with undo:
+                    recent = st.session_state.get("just_completed_task")
+                    immediate = bool(recent and recent[0] == task.id)
+                    if st.button(
+                        "↶ Undo" if immediate else "↶ Reopen",
+                        key=f"home_undo_completed_{task.id}",
+                        help="Reopen this task if you marked it done by mistake.",
+                    ):
+                        _apply(lambda t=task: _reopen_task(t), "Task reopened.")
+            if len(done_today) > 3:
+                label = (
+                    "Show fewer completed tasks"
+                    if show_all_done
+                    else f"Show {len(done_today) - 3} more"
+                )
+                if st.button(label, key="home_toggle_completed"):
+                    st.session_state["home_all_completed"] = not show_all_done
+                    st.rerun()
 
 
 def _task_rows(
@@ -518,20 +693,21 @@ def _task_rows(
     categories: tuple[str, ...],
     *,
     selected_task_id: int | None = None,
+    sort_by: str = "Deadline",
 ) -> None:
     st.subheader("Your tasks")
     progress_preferences = load_progress_preferences(DEFAULT_DB_PATH)
+    task_modes = load_task_modes(DEFAULT_DB_PATH)
     just_done = st.session_state.get("just_completed_task")
     if just_done:
-        task_id, title, previous_remaining = just_done
+        task_id, title, _previous_remaining = just_done
         current = next((t for t in overview.tasks if t.id == task_id), None)
         if current is not None and current.status == "completed":
-            st.success(f"{title} completed.")
+            st.caption(f"{title} completed. You can undo this below.")
             if st.button("Undo completion", key="undo_task_completion"):
 
                 def restore():
-                    restore_just_completed_task(DEFAULT_DB_PATH, task_id, previous_remaining)
-                    st.session_state.pop("just_completed_task", None)
+                    _reopen_task(current)
 
                 _apply(restore, "Task reopened.")
         else:
@@ -542,9 +718,12 @@ def _task_rows(
     else:
         show_done = st.checkbox("Show completed tasks", value=False, key="home_show_done")
         displayed = [task for task in all_tasks if show_done or task.status != "completed"]
-    displayed.sort(
-        key=lambda t: (t.status == "completed", t.deadline or date.max, -t.priority, t.id)
-    )
+    sort_keys = {
+        "Deadline": lambda t: (t.deadline or date.max, -t.priority, t.id),
+        "Priority": lambda t: (-t.priority, t.deadline or date.max, t.id),
+        "Category": lambda t: (t.category.casefold(), t.deadline or date.max, t.id),
+    }
+    displayed.sort(key=lambda t: (t.status == "completed", *sort_keys[sort_by](t)))
     if not displayed:
         st.caption("No tasks here. Add your first one above.")
     for task in displayed:
@@ -563,46 +742,71 @@ def _task_rows(
                     f"<strong>{escape(task.title)}</strong> · {_priority_badge(task.priority)}",
                     unsafe_allow_html=True,
                 )
-                st.caption(
-                    f"{task.category} · {due_display(task, deadline_times, date.today())}"
-                    f" · {pretty_duration(actually_left)} left"
+                simple = is_simple_task(task, overview.advanced.steps, task_modes)
+                due_phrase = due_display(task, deadline_times, date.today())
+                task_meta = f"{task.category} · {due_phrase}" + (
+                    " · To-do" if simple else f" · {pretty_duration(actually_left)} left"
                 )
+                if task.deadline and task.deadline < date.today() and task.status == "pending":
+                    st.markdown(
+                        f'<span class="pw-task-overdue">{escape(task_meta)}</span>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption(task_meta)
                 checklist_for_task = [
                     step
                     for step in overview.advanced.steps
                     if step.task_id == task.id and step.kind == "checklist"
                 ]
-                st.markdown(
-                    progress_html(
-                        task, checklist_for_task, timed, progress_preferences.get(task.id)
-                    ),
-                    unsafe_allow_html=True,
+                pref = progress_preferences.get(task.id, ProgressPreference())
+                chosen_tracking = tracking_choice(
+                    task,
+                    task_modes.get(task.id),
+                    pref,
+                    checklist_for_task,
                 )
+                if not simple:
+                    st.markdown(
+                        progress_html(task, checklist_for_task, timed, pref),
+                        unsafe_allow_html=True,
+                    )
+                if (
+                    chosen_tracking == "Subtasks"
+                    and checklist_for_task
+                    and st.session_state.get("open_task_details") != task.id
+                ):
+                    _task_checklist(overview, task, key_prefix="tasks")
             with action:
+                recent = st.session_state.get("just_completed_task")
+                button_label = (
+                    "Done"
+                    if task.status == "pending"
+                    else "↶ Undo"
+                    if recent and recent[0] == task.id
+                    else "↶ Reopen"
+                )
                 if st.button(
-                    "Done" if task.status == "pending" else "Reopen",
+                    button_label,
                     key=f"done_{task.id}",
                     width="stretch",
+                    disabled=task.status == "pending"
+                    and any(not item.checked for item in checklist_for_task),
                 ):
-
-                    def set_completed(t=task):
-                        marking_done = t.status == "pending"
-                        toggle_quick_task(DEFAULT_DB_PATH, t.id, marking_done)
-                        if marking_done:
-                            st.session_state["just_completed_task"] = (
-                                t.id,
-                                t.title,
-                                t.remaining_minutes,
-                            )
-                        else:
-                            st.session_state.pop("just_completed_task", None)
-
-                    _apply(set_completed, "Task updated.")
+                    if task.status == "pending":
+                        _apply(lambda t=task: _remember_task_done(t), "Task done.")
+                    else:
+                        _apply(lambda t=task: _reopen_task(t), "Task reopened.")
             with partial:
-                if task.status == "pending" and st.button(
-                    "Progress",
-                    key=f"partial_{task.id}",
-                    width="stretch",
+                if (
+                    task.status == "pending"
+                    and not simple
+                    and chosen_tracking != "Subtasks"
+                    and st.button(
+                        "Progress",
+                        key=f"partial_{task.id}",
+                        width="stretch",
+                    )
                 ):
                     st.session_state["partial_task_id"] = (
                         None if st.session_state.get("partial_task_id") == task.id else task.id
@@ -612,20 +816,14 @@ def _task_rows(
                 if st.button("Details", key=f"details_{task.id}", width="stretch"):
                     current = st.session_state.get("open_task_details")
                     st.session_state["open_task_details"] = None if current == task.id else task.id
+                    st.session_state.pop("task_more_details_id", None)
+                    st.session_state.pop("home_quick_progress", None)
                     st.rerun()
-            if st.session_state.get("partial_task_id") == task.id:
+            if st.session_state.get("partial_task_id") == task.id and chosen_tracking != "Subtasks":
                 pref = progress_preferences.get(task.id, ProgressPreference())
-                st.markdown("**How should progress be measured?**")
-                choices = ["auto", "time", "manual"]
-                if checklist_for_task:
-                    choices.insert(1, "checklist")
-                mode = st.selectbox(
-                    "Track using",
-                    choices,
-                    index=choices.index(pref.mode) if pref.mode in choices else 0,
-                    format_func=MODE_LABELS.get,
-                    key=f"progress_mode_{task.id}",
-                )
+                st.markdown("**Update progress**")
+                # Keep the original tracking mode, even if subtasks were added later.
+                mode = "manual" if pref.mode in ("manual", "auto") else pref.mode
                 with st.form(f"progress_method_{task.id}"):
                     percent = pref.manual_percent
                     if mode == "manual":
@@ -643,8 +841,8 @@ def _task_rows(
                         )
                     if st.form_submit_button("Save progress preference"):
                         _apply(
-                            lambda: save_progress_preference(
-                                DEFAULT_DB_PATH, task.id, mode, int(percent)
+                            lambda: _save_progress_preference_and_close(
+                                task.id, mode, int(percent)
                             ),
                             "Progress display updated.",
                         )
@@ -703,13 +901,104 @@ def _task_rows(
                                     remaining,
                                 )
                                 st.session_state.pop("partial_task_id", None)
+                                st.session_state.pop("open_task_details", None)
+                                st.session_state.pop("home_quick_progress", None)
 
-                            _apply(save_partial, "Progress saved. Your schedule may need review.")
+                            _apply(save_partial, "Remaining work updated.")
             if st.session_state.get("open_task_details") == task.id:
                 _edit_task(overview, categories, deadline_times)
 
 
 def _edit_task(overview, categories, deadline_times) -> None:
+    task_id = st.session_state.get("open_task_details")
+    task = next((item for item in overview.tasks if item.id == task_id), None)
+    if task is None:
+        st.session_state.pop("open_task_details", None)
+        return
+    steps = [item for item in overview.advanced.steps if item.task_id == task_id]
+    with st.container(border=True):
+        heading, close = st.columns([5, 1], vertical_alignment="center")
+        heading.markdown(f"#### {task.title}")
+        if close.button("Close", key=f"close_task_summary_{task.id}"):
+            st.session_state.pop("open_task_details", None)
+            st.session_state.pop("task_board_selected_task", None)
+            st.session_state.pop("task_more_details_id", None)
+            st.session_state.pop("home_quick_progress", None)
+            st.rerun()
+        priority_label = next(
+            (name for name, rank in PRIORITIES.items() if rank == task.priority),
+            "Medium",
+        )
+        st.caption(
+            f"{task.category} · {due_display(task, deadline_times, date.today())} · "
+            f"{priority_label} priority"
+        )
+        checklist = [step for step in steps if step.kind == "checklist"]
+        if task.status == "completed":
+            st.caption("Completed")
+            _task_checklist(overview, task, key_prefix="summary", interactive=False)
+            if st.button("↶ Undo completion", key=f"summary_undo_{task.id}"):
+                _apply(lambda: _reopen_task(task), "Task reopened.")
+        else:
+            pref = load_progress_preferences(DEFAULT_DB_PATH).get(task.id, ProgressPreference())
+            modes = load_task_modes(DEFAULT_DB_PATH)
+            selected = tracking_choice(task, modes.get(task.id), pref, checklist)
+            if selected != "Simple to-do":
+                st.markdown(
+                    progress_html(
+                        task,
+                        [step for step in steps if step.kind == "checklist"],
+                        [step for step in steps if step.kind == "timed"],
+                        pref,
+                    ),
+                    unsafe_allow_html=True,
+                )
+            if selected == "Subtasks":
+                _task_checklist(overview, task, key_prefix="summary")
+            if (
+                selected == "Progress bar"
+                and st.session_state.get("home_quick_progress") == task.id
+            ):
+                with st.form(f"task_quick_progress_{task.id}"):
+                    value = st.slider(
+                        "Progress",
+                        0,
+                        100,
+                        pref.manual_percent if pref.mode == "manual" else 0,
+                        step=5,
+                    )
+                    if st.form_submit_button("Save progress", type="primary"):
+                        _apply(
+                            lambda: _save_progress_preference_and_close(task.id, "manual", value),
+                            "Progress saved.",
+                        )
+            primary, secondary = st.columns([1.2, 1.6], gap="small")
+            if primary.button(
+                "Mark done",
+                key=f"summary_done_{task.id}",
+                disabled=bool(checklist) and not all(item.checked for item in checklist),
+            ):
+                _apply(lambda: _remember_task_done(task), "Task done")
+            if selected == "Progress bar" and secondary.button(
+                "Update progress", key=f"summary_progress_{task.id}"
+            ):
+                st.session_state["home_quick_progress"] = task.id
+                st.rerun()
+        expanded = st.session_state.get("task_more_details_id") == task.id
+        if st.button(
+            "Hide extra details" if expanded else "More details",
+            key=f"task_more_button_{task.id}",
+        ):
+            if expanded:
+                st.session_state.pop("task_more_details_id", None)
+            else:
+                st.session_state["task_more_details_id"] = task.id
+            st.rerun()
+    if st.session_state.get("task_more_details_id") == task.id:
+        _edit_task_full(overview, categories, deadline_times)
+
+
+def _edit_task_full(overview, categories, deadline_times) -> None:
     task_id = st.session_state.get("open_task_details")
     task = next((task for task in overview.tasks if task.id == task_id), None)
     if task is None:
@@ -719,6 +1008,42 @@ def _edit_task(overview, categories, deadline_times) -> None:
     checklist = [step for step in steps if step.kind == "checklist"]
     with st.container(border=True):
         st.subheader(task.title)
+        task_modes = load_task_modes(DEFAULT_DB_PATH)
+        preference = load_progress_preferences(DEFAULT_DB_PATH).get(task.id)
+        current_mode = tracking_choice(
+            task,
+            task_modes.get(task.id),
+            preference,
+            checklist,
+        )
+        with st.expander("Progress tracking", expanded=False):
+            modes = ["Simple to-do", "Progress bar", "Subtasks"]
+            display_mode = st.radio(
+                "Track progress with",
+                modes,
+                index=modes.index(current_mode),
+                horizontal=True,
+                key=f"task_display_{task.id}",
+            )
+            if st.button("Save tracking method", key=f"save_task_display_{task.id}"):
+
+                def save_tracking():
+                    save_task_mode(
+                        DEFAULT_DB_PATH,
+                        task.id,
+                        "simple" if display_mode == "Simple to-do" else "progress",
+                    )
+                    if display_mode != "Simple to-do":
+                        save_progress_preference(
+                            DEFAULT_DB_PATH,
+                            task.id,
+                            "checklist" if display_mode == "Subtasks" else "manual",
+                            preference.manual_percent if preference is not None else 0,
+                        )
+                    st.session_state.pop("open_task_details", None)
+                    st.session_state.pop("task_more_details_id", None)
+
+                _apply(save_tracking, "Progress tracking updated.")
         from workspace.advanced_repository import set_task_dependencies
 
         others = {t.id: t.title for t in overview.tasks if t.id != task.id}
@@ -740,32 +1065,19 @@ def _edit_task(overview, categories, deadline_times) -> None:
                         lambda: set_task_dependencies(DEFAULT_DB_PATH, task.id, selected_parents),
                         "Prerequisites saved. Review your schedule for changes.",
                     )
-        if st.button("Close", key="close_task_details"):
-            st.session_state["open_task_details"] = None
-            st.rerun()
-        st.markdown("**Checklist**")
-        for step in checklist:
-            checked = st.checkbox(
-                step.title,
-                value=step.checked,
-                key=f"check_{step.id}",
-                disabled=task.status == "completed",
-            )
-            if checked != step.checked:
-                _apply(
-                    lambda s=step, value=checked: set_checklist_done(DEFAULT_DB_PATH, s.id, value),
-                    "Checklist updated.",
-                )
+        # Manual-tracked tasks may still have checklists; those can be edited
+        # without silently switching their saved progress tracking method.
+        if current_mode == "Progress bar" and checklist:
+            with st.expander("Subtasks (not used for progress)", expanded=False):
+                _task_checklist(overview, task, key_prefix="extra")
+        # In Subtasks mode, checkboxes are visible in the compact summary.
         all_checked = bool(checklist) and all(item.checked for item in checklist)
         dismissed = st.session_state.get("dismissed_done_prompt", set())
         if task.status == "pending" and all_checked and task.id not in dismissed:
             st.info("All checklist items are done. Mark this task complete?")
             confirm, later = st.columns(2, gap="small")
             if confirm.button("Mark task done", key=f"confirm_check_done_{task.id}"):
-                _apply(
-                    lambda: toggle_quick_task(DEFAULT_DB_PATH, task.id, True),
-                    "Task marked complete.",
-                )
+                _apply(lambda: _remember_task_done(task), "Task marked complete.")
             if later.button("Not yet", key=f"later_check_done_{task.id}"):
                 st.session_state["dismissed_done_prompt"] = dismissed | {task.id}
                 st.rerun()
@@ -811,7 +1123,8 @@ def _edit_task(overview, categories, deadline_times) -> None:
                     due_time = st.text_input(
                         "Due time",
                         value=format_time(current_due) if current_due is not None else "",
-                        placeholder="hh:mm",
+                        placeholder="e.g. 11:05",
+                        help="24-hour time, including any minute from 00 to 59.",
                         max_chars=5,
                         key=f"edit_time_{task.id}_{rev}",
                     )
@@ -839,7 +1152,7 @@ def _edit_task(overview, categories, deadline_times) -> None:
                 must_finish = st.checkbox(
                     "Must finish by deadline",
                     value=task_is_required(DEFAULT_DB_PATH, task) or task.deadline is None,
-                    help="Required work is protected in Plan A vs Plan B comparisons.",
+                    help="Keep this work protected when planning around deadlines.",
                 )
                 if st.form_submit_button("Save changes", type="primary"):
 
@@ -847,7 +1160,13 @@ def _edit_task(overview, categories, deadline_times) -> None:
                         edit_quick_task(
                             DEFAULT_DB_PATH,
                             task.id,
-                            TaskDraft(name, category, due, PRIORITIES[priority], estimate),
+                            TaskDraft(
+                                name,
+                                create_category(DEFAULT_DB_PATH, category),
+                                due,
+                                PRIORITIES[priority],
+                                estimate,
+                            ),
                             remaining,
                             due_minute=parse_due_clock(due_time),
                         )
@@ -856,6 +1175,8 @@ def _edit_task(overview, categories, deadline_times) -> None:
                         )
                         st.session_state["edit_task_rev"] = rev + 1
                         st.session_state.pop("open_task_details", None)
+                        st.session_state.pop("task_board_selected_task", None)
+                        st.session_state.pop("task_more_details_id", None)
                         st.session_state.pop("partial_task_id", None)
 
                     _apply(save, "Task saved.")
@@ -866,73 +1187,62 @@ def _edit_task(overview, categories, deadline_times) -> None:
                 def delete():
                     delete_task(DEFAULT_DB_PATH, task.id)
                     st.session_state.pop("open_task_details", None)
+                    st.session_state.pop("task_board_selected_task", None)
+                    st.session_state.pop("task_more_details_id", None)
 
                 _apply(delete, "Task deleted.")
 
 
 def _home_planning_insight(overview, now: datetime, required_ids: frozenset[int]) -> None:
-    """One visible, data-driven summary; no duplicated radar or hidden warning."""
+    """One short warning about upcoming required work with a direct scheduling action."""
     snapshot = overview.advanced
     if not (snapshot.budgets or snapshot.windows):
-        st.markdown(
-            insight_card(
-                "Plan your study time",
-                "Set study hours in Calendar to get a realistic scheduling suggestion.",
-            ),
-            unsafe_allow_html=True,
-        )
+        st.caption("Set your study hours in Calendar to get scheduling suggestions.")
         return
-
     comparison = compare_plans(snapshot, now)
     coverage = check_required_coverage(snapshot, comparison.preserve.revision, now, required_ids)
-    if coverage.outstanding_minutes:
-        count = len(coverage.tasks_short)
-        title = f"{count} deadline{'s' if count != 1 else ''} need attention"
-        names = ", ".join(coverage.tasks_short[:3])
-        if count > 3:
-            names += f" and {count - 3} more"
-        message = (
-            f"{pretty_duration(coverage.outstanding_minutes)} of required work still needs "
-            f"a study slot before its deadline. Affected: {names}."
-        )
-        st.markdown(insight_card(title, message), unsafe_allow_html=True)
-        st.page_link("workspace/views/week.py", label="Review planning options")
+    upcoming_titles = {
+        task.title
+        for task in overview.tasks
+        if task.status == "pending"
+        and task.deadline is not None
+        and now.date() <= task.deadline <= week_bounds(now.date())[1]
+    }
+    affected = [name for name in coverage.tasks_short if name in upcoming_titles]
+    if not affected:
         return
-
-    significant = [
-        risk
-        for risk in comparison.preserve.risks
-        if risk.reason == "overdue" or risk.unscheduled_minutes >= 60
-    ]
-    if significant:
-        first = significant[0]
+    steps = {step.id: step for step in snapshot.steps}
+    booked = {}
+    for slot in comparison.preserve.revision.slots:
+        booked[slot.step_id] = booked.get(slot.step_id, 0) + slot.minutes
+    remaining = sum(
+        max(0, step.remaining_minutes - booked.get(step.id, 0))
+        for step in steps.values()
+        if step.task_title in upcoming_titles
+        and step.task_title in affected
+        and step.kind == "timed"
+        and not step.parent_completed
+    )
+    with st.container(border=True):
         st.markdown(
-            insight_card(
-                "A deadline needs attention",
-                f"{first.title} may need a scheduling adjustment. Review the available options.",
-            ),
-            unsafe_allow_html=True,
+            f"**{len(affected)} deadline{'s' if len(affected) != 1 else ''} need attention**"
         )
-        st.page_link("workspace/views/week.py", label="Review planning options")
-    elif comparison.preserve.changed:
-        st.markdown(
-            insight_card(
-                "An updated plan is available",
-                "You can preview a new arrangement without changing the saved calendar.",
-            ),
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            insight_card("Your study plan is on track", "No significant changes needed."),
-            unsafe_allow_html=True,
-        )
+        st.caption(f"{pretty_duration(remaining)} of work still needs planning.")
+        if st.button("Fix my schedule", key="home_fix_schedule", type="primary"):
+            st.session_state["start_week_plan"] = True
+            st.session_state["optimizer_goal"] = "deadlines"
+            st.session_state["calendar_review_open"] = True
+            st.switch_page("workspace/views/week.py")
 
 
 def main() -> None:
     now = datetime.now()
     greeting = (
-        "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
+        "Good evening"
+        if now.hour < 4 or now.hour >= 18
+        else "Good morning"
+        if now.hour < 12
+        else "Good afternoon"
     )
     try:
         initialize_quick_tasks(DEFAULT_DB_PATH)
@@ -950,7 +1260,7 @@ def main() -> None:
         '<div class="pw-hero">'
         f'<div class="pw-eyebrow">{now:%A, %d %B %Y}</div>'
         f"<h1>{greeting}{personal}.</h1>"
-        "<p>Your tasks, deadlines and one sensible next step.</p>"
+        ""
         "</div>",
         unsafe_allow_html=True,
     )
@@ -963,7 +1273,7 @@ def main() -> None:
                 st.rerun()
     message = st.session_state.pop("home_message", None)
     if message:
-        st.success(message)
+        st.toast(message)
 
     pending = [task for task in overview.tasks if task.status == "pending"]
     render_daily_briefing(overview, now)
@@ -977,32 +1287,39 @@ def main() -> None:
         for session in overview.advanced.sessions
         if session.status == "planned" and monday <= session.day <= sunday
     )
-    a, b, c = st.columns(3, gap="medium")
-    with a:
-        st.markdown(
-            stat_card("Active tasks", str(len(pending)), "Assignments and to-dos"),
-            unsafe_allow_html=True,
-        )
-    with b:
-        st.markdown(
-            stat_card("Planned hours", f"{planned / 60:g}h", "Accepted this week"),
-            unsafe_allow_html=True,
-        )
-    with c:
-        st.markdown(
-            stat_card("Upcoming deadlines", str(upcoming), "Due within seven days"),
-            unsafe_allow_html=True,
-        )
+    with st.container(key="home_statistics"):
+        a, b, c = st.columns(3, gap="medium")
+        with a:
+            st.markdown(
+                stat_card("Active tasks", str(len(pending)), "Assignments and to-dos"),
+                unsafe_allow_html=True,
+            )
+        with b:
+            st.markdown(
+                stat_card("Planned time", pretty_duration(planned), "Accepted this week"),
+                unsafe_allow_html=True,
+            )
+        with c:
+            st.markdown(
+                stat_card("Upcoming deadlines", str(upcoming), "Due within seven days"),
+                unsafe_allow_html=True,
+            )
 
     # The most actionable planning information belongs above the two-column overview.
     _home_planning_insight(overview, now, required_ids)
     nudge = _personalized_nudge(overview, now.date(), profile)
     if nudge:
-        st.caption(nudge)
+        st.markdown(insight_card("Study rhythm", nudge), unsafe_allow_html=True)
     _home_priorities(overview, due_times, now.date())
     # Full-width chart avoids a long right-hand column and unused left-hand space.
     st.markdown(_weekly_workload(overview, now.date()), unsafe_allow_html=True)
-    render_deadline_runway(overview, now)
+    render_deadline_runway(
+        overview,
+        now,
+        task_actions=lambda task: _home_task_actions(task, overview, key_prefix="home_due"),
+        progress_preferences=load_progress_preferences(DEFAULT_DB_PATH),
+    )
+    # Deadline, Focus and To-do actions each render their own panel inline.
     render_weekly_replay(overview.advanced, now, DEFAULT_DB_PATH)
 
 

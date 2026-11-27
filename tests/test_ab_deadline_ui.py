@@ -1,4 +1,4 @@
-"""A/B UI must not offer an incomplete required plan as a complete alternative."""
+"""The approved schedule chooser exposes one selected goal, not Plan A/B."""
 
 import importlib.util
 import sys
@@ -21,16 +21,15 @@ def _ui():
     ui.session_state = {}
     ui.expander.side_effect = lambda *_, **__: nullcontext()
     ui.selectbox.return_value = "deadlines"
-    ui.button.side_effect = lambda label, **_: label in ("Preview schedule", "Build both plans")
-    ui.radio.return_value = "Plan B · Focus days"
+    ui.button.side_effect = lambda label, **_: label == "Preview schedule"
     with patch.dict(sys.modules, {"streamlit": ui}):
-        spec = importlib.util.spec_from_file_location("test_isolated_ab_ui", FILE)
+        spec = importlib.util.spec_from_file_location("test_one_goal_ui", FILE)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return ui, module
 
 
-def test_two_complete_plans_can_be_chosen_without_saving():
+def test_single_goal_can_be_previewed_without_plan_a_b():
     snap = PlannerSnapshot(
         (
             StudyStep(
@@ -42,24 +41,22 @@ def test_two_complete_plans_can_be_chosen_without_saving():
         (),
         "current",
     )
-    steady = proposal_from_slots(snap, NOW, (Slot(1, DAY, 540, 600),))
-    focused = proposal_from_slots(snap, NOW, (Slot(1, DAY, 600, 660),))
+    suggested = proposal_from_slots(snap, NOW, (Slot(1, DAY, 540, 600),))
     ui, module = _ui()
-
-    def fake_optimize(_snapshot, _now, *, goal, compact=False, **_kwargs):
-        return SimpleNamespace(revision=focused if compact else steady, message="")
-
     with (
-        patch.object(module, "optimize", side_effect=fake_optimize),
+        patch.object(
+            module, "optimize", return_value=SimpleNamespace(revision=suggested, message="")
+        ),
         patch.object(module, "validate_revision"),
     ):
-        result, goal = module.choose_goal_preview(snap, NOW, None, must_ids=frozenset({1}))
-    assert goal == "ab_focus"
-    assert result.revision == focused
-    ui.dataframe.assert_called()
+        result, goal = module.choose_goal_preview(snap, NOW, None)
+    assert goal == "deadlines"
+    assert result.revision == suggested
+    ui.radio.assert_not_called()
+    assert "Plan A" not in FILE.read_text(encoding="utf-8")
 
 
-def test_partial_plan_never_exposed_as_complete_option():
+def test_partial_plan_is_preview_not_automatic_approval():
     snap = PlannerSnapshot(
         (StudyStep(1, 1, "Exam", "Study", "timed", 60, 60, False, DAY, 2, False),),
         (),
@@ -67,18 +64,15 @@ def test_partial_plan_never_exposed_as_complete_option():
         (),
         "current",
     )
-    complete = proposal_from_slots(snap, NOW, (Slot(1, DAY, 540, 600),))
     partial = proposal_from_slots(snap, NOW, (Slot(1, DAY, 540, 570),))
-    ui, module = _ui()
-
-    def fake_optimize(_snapshot, _now, *, goal, compact=False, **_kwargs):
-        return SimpleNamespace(revision=partial if compact else complete, message="")
-
+    _, module = _ui()
     with (
-        patch.object(module, "optimize", side_effect=fake_optimize),
+        patch.object(
+            module, "optimize", return_value=SimpleNamespace(revision=partial, message="")
+        ),
         patch.object(module, "validate_revision"),
     ):
-        result, goal = module.choose_goal_preview(snap, NOW, None, must_ids=frozenset({1}))
+        result, goal = module.choose_goal_preview(snap, NOW, None)
     assert goal == "deadlines"
-    assert result.revision == complete
-    ui.warning.assert_called()
+    assert result.revision == partial
+    assert "accept_revision" not in FILE.read_text(encoding="utf-8")
