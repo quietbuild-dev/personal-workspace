@@ -61,3 +61,30 @@ def completed_today(overview, today: date):
         and task.completed_at.astimezone().date() == today
     ]
     return sorted(completed, key=lambda task: task.completed_at, reverse=True)
+
+
+def simple_todo_tasks(overview, today: date, modes: dict[int, str]):
+    """Simple to-dos only, with today's completed items available for Undo.
+
+    Explicit task modes win. For older tasks without a saved mode, use the
+    same legacy fallback as the Tasks page (tasks without study/checklist steps).
+    """
+    from workspace.task_modes import is_simple_task
+
+    steps = getattr(getattr(overview, "advanced", None), "steps", ())
+    done_today_ids = {task.id for task in completed_today(overview, today)}
+    todos = [
+        task
+        for task in overview.tasks
+        if (task.status == "pending" or task.id in done_today_ids)
+        and is_simple_task(task, steps, modes)
+    ]
+    return sorted(
+        todos,
+        key=lambda task: (
+            task.status == "completed",  # Unfinished items first.
+            task.deadline or date.max,
+            -task.priority,
+            task.id,
+        ),
+    )

@@ -142,5 +142,5 @@ def test_completed_tasks_expand_without_a_nested_grey_panel(monkeypatch):
     )
     shown = "\n".join(str(call.args[0]) for call in st.markdown.call_args_list)
     assert "Finished 4" in shown
-    assert "To-do 15" in shown
+    assert "### To-do" in shown
     assert not st.expander.called
