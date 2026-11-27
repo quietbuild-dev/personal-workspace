@@ -272,9 +272,80 @@ hr {border-color:#393640!important;}
   .pw-stat-value {font-size:1.75rem;}
   [data-testid="stMainBlockContainer"],.block-container {padding-top:1.15rem!important;}
 }
+/* A category stack is a single, sharp-edged column; hover labels remain accessible. */
+.pw-workbar-track,.pw-workbar-segment,
+.pw-workbar-segment:first-child,.pw-workbar-segment:last-child,
+.pw-workbar-segment:first-child:last-child {
+    border-radius:0!important;box-shadow:none!important;
+}
+.pw-workbar-segment {margin:0!important;}
 @media(prefers-reduced-motion:reduce) {
   .stButton > button,.stFormSubmitButton > button,.stPageLink a {transition:none;}
 }
+/* Calendar date/nav and controls share one clear central axis. */
+.pw-calendar-date {text-align:center!important;font-size:1.18rem!important;
+    font-weight:720!important;margin:6px 0 12px!important;color:#F1EEF5!important;}
+.pw-scroll {max-width:950px!important;margin:12px auto 18px!important;}
+.pw-goal-table-scroll {overflow-x:auto;margin:16px 0;}
+.pw-goal-table {border-collapse:collapse;width:100%;font-size:.86rem;}
+.pw-goal-table th,.pw-goal-table td {border:1px solid #444050;padding:12px 9px;}
+.pw-goal-table thead th {color:#D1BFE0;font-size:.79rem;}
+.pw-goal-table tbody th {text-align:left;color:#F1EEF5;font-weight:620;}
+.pw-goal-table td {text-align:center!important;color:#E1DBE8;white-space:nowrap;}
+/* Replay assignments: compact meaningful progress, no wall of captions. */
+.pw-replay-item {display:flex;justify-content:space-between;gap:10px;
+    align-items:center;margin:13px 0 5px;color:#EAE6EF;font-size:.91rem;}
+.pw-replay-item small {color:#C7BFD1;font-size:.78rem;white-space:nowrap;}
+.pw-replay-track {height:6px;background:#363140;border-radius:10px;overflow:hidden;}
+.pw-replay-track > div {height:100%;background:#91B9A4;border-radius:10px;}
+/* Home-only type scale: the rest of the application remains unchanged. */
+.st-key-home_statistics .pw-stat-label {font-size:1rem!important;font-weight:700!important;
+    color:#DDD7E4!important;line-height:1.35!important;}
+.st-key-home_statistics .pw-stat-value {font-size:2.38rem!important;line-height:1.14!important;
+    margin-top:10px!important;}
+.st-key-home_statistics .pw-stat-note {font-size:.87rem!important;line-height:1.45!important;
+    color:#B8B0C0!important;}
+.st-key-home_daily_briefing .pw-briefing-facts {font-size:1.02rem;color:#F1EEF5;
+    line-height:1.45;font-weight:570;margin:3px 0 8px;}
+.st-key-home_daily_briefing .pw-briefing-deadlines {font-size:.96rem;
+    color:#CBBAD9;font-weight:640;margin:0 0 9px;}
+.pw-home-task-name {font-size:1.09rem;line-height:1.45;font-weight:720;
+    color:#F1EEF5;margin:11px 0 5px;overflow-wrap:anywhere;}
+.pw-home-task-meta {font-size:.9rem;line-height:1.45;color:#B8B2C2;margin:0 0 7px;}
+.pw-insight {padding:15px 18px!important;margin:10px 0 16px!important;}
+.pw-insight strong {font-size:.99rem!important;}
+.pw-insight p {font-size:.94rem!important;color:#D4CBDD!important;}
+/* Left-aligned and compact, never floated in a central narrow column. */
+.st-key-home_due_next {max-width:980px!important;margin-left:0!important;
+    margin-right:auto!important;}
+.st-key-home_due_next .pw-home-due-row {border-top:1px solid #393640;
+    padding:13px 0 7px;margin-top:10px;}
+.st-key-home_due_next .pw-home-due-line {display:flex;align-items:baseline;
+    justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.st-key-home_due_next .pw-home-due-line strong {color:#F1EEF5;font-size:1rem;
+    font-weight:700;overflow-wrap:anywhere;}
+.st-key-home_due_next .pw-home-due-line span {color:#C0B7CA;
+    font-size:.88rem;white-space:nowrap;}
+.st-key-home_due_next .pw-home-due-progress {margin-top:8px;}
+.st-key-home_due_next .pw-home-due-progress > span {font-size:.82rem;
+    color:#B8B0C0;}
+.st-key-home_due_next .pw-home-due-track {height:5px;border-radius:3px;
+    background:#393640;overflow:hidden;margin-top:5px;}
+.st-key-home_due_next .pw-home-due-track > i {height:100%;display:block;
+    background:#BAA9D0;}
+.st-key-home_due_next .stButton button {min-height:36px!important;
+    font-size:.85rem!important;}
+/* Comfortable reading width for deadline rows and task completion. */
+.pw-completed-row {display:flex!important;align-items:center!important;
+    gap:16px!important;padding:11px 14px!important;margin:8px 0!important;
+    background:#23322D!important;border-left:3px solid #94B9A7!important;
+    border-radius:8px!important;}
+.pw-done-tick {display:inline-flex!important;flex:0 0 25px;align-items:center;
+    justify-content:center;font-size:1.04rem;font-weight:750;
+    color:#B7D5C2!important;}
+.pw-completed-row span:last-child {text-decoration:line-through!important;
+    text-decoration-thickness:1.4px!important;text-decoration-color:#9AB9AB!important;
+    color:#C4D4CA!important;line-height:1.5!important;}
 </style>
 """
 
@@ -329,6 +400,32 @@ CALENDAR_CSS = """
     background:#F0DFC0!important;border-color:#D9BD94!important;}
 .wp-scroll .wp-calendar .wp-low {color:#263038!important;
     background:#D3DDE6!important;border-color:#A8B1BB!important;}
+/* Every day's category colors form one continuous, unbroken stack. */
+.pw-workbar-segment {border-radius:0!important;margin:0!important;box-shadow:none!important;}
+.pw-workbar-segment:first-child {border-radius:0 0 8px 8px!important;}
+.pw-workbar-segment:last-child {border-radius:8px 8px 0 0!important;}
+.pw-workbar-segment:first-child:last-child {border-radius:0!important;}
+.pw-workbar-track {border-radius:0!important;}
+.pw-workbar-segment {border-radius:0!important;}
+/* Tiny task alerts should never dominate the page. */
+.pw-stat {position:relative;overflow:hidden;}
+.pw-stat-value {font-size:2.05rem!important;font-weight:800!important;letter-spacing:-.045em;}
+.pw-stat--lavender {border-top:2px solid #BAA9D0!important;}
+.pw-stat--rose {border-top:2px solid #D99EBB!important;}
+.pw-stat--sage {border-top:2px solid #8AB9A6!important;}
+.pw-task-overdue {display:inline-block;color:#E8A5AC!important;font-weight:650;}
+.pw-completed-row {display:flex;gap:10px;align-items:center;padding:7px 10px;
+    background:#22312C;border-left:3px solid #8AB9A6;border-radius:5px;margin:5px 0;}
+.pw-completed-row i {font-style:normal;color:#8AB9A6;font-weight:800;}
+.pw-completed-row span {color:#BECFC5;text-decoration:line-through;}
+.pw-agenda-day-heading {margin:30px 0 14px;padding-top:13px;
+    border-top:1px solid #393640;color:#F1EEF5;font-size:1.05rem;font-weight:720;}
+.pw-agenda-row {padding:6px 12px;margin:5px 0;background:#23232C;
+    border-left:3px solid var(--category-color,#BAA9D0);border-radius:4px;}
+.pw-agenda-time {color:#C9C2D3;font-size:.81rem;}
+.pw-agenda-title {font-weight:650;color:#F1EEF5;}
+/* Single day view is deliberately narrower, without shrinking the week view. */
+.pw-scroll:has(.wp-calendar[style*="--days:1"]) {max-width:920px;margin-inline:auto;}
 </style>
 """
 
@@ -345,11 +442,11 @@ COMPARISON_CSS = """
 .cmp-event {border-radius:7px!important;}
 .cmp-study {background:#655875!important;color:#FBF7FF!important;
     border-color:#DDC5F0!important;}
-.cmp-old {background:#3A3541!important;color:#CFC6DB!important;
-    border:1px dashed #9889A9!important;border-left:3px solid #9889A9!important;}
+.cmp-old {background:#453D50!important;color:#ECE4F5!important;
+    border:1px solid #81738F!important;border-left:3px solid #BDA5D0!important;}
 .cmp-new {background:#6F5B83!important;color:#FFF9FF!important;
     border-left:3px solid #D6B8F1!important;}
-.cmp-same {opacity:.52!important;}
+.cmp-same {opacity:.9!important;}
 .cmp-lecture {background:#455A75!important;color:#F4F8FF!important;
     border-color:#8FAACB!important;}
 .cmp-social {background:#744F65!important;color:#FFF5F9!important;
@@ -379,11 +476,19 @@ def priority_badge(priority: int) -> str:
 
 
 def stat_card(label: str, value: str, note: str) -> str:
+    hue = (
+        "sage"
+        if label.lower().startswith("completed")
+        else "rose"
+        if "priority" in label.lower()
+        else "lavender"
+    )
+    foot = f'<div class="pw-stat-note">{escape(note)}</div>' if note else ""
     return (
-        '<div class="pw-stat">'
+        f'<div class="pw-stat pw-stat--{hue}">'
         f'<div class="pw-stat-label">{escape(label)}</div>'
         f'<div class="pw-stat-value">{escape(value)}</div>'
-        f'<div class="pw-stat-note">{escape(note)}</div></div>'
+        f"{foot}</div>"
     )
 
 
@@ -392,3 +497,6 @@ def insight_card(title: str, explanation: str) -> str:
         '<div class="pw-insight">'
         f"<strong>{escape(title)}</strong><p>{escape(explanation)}</p></div>"
     )
+
+
+# Final polish: continuous stack with only the outside corners rounded.

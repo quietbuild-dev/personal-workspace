@@ -37,7 +37,8 @@ def focus_tasks(overview, today: date):
         task
         for task in overview.tasks
         if task.status == "pending"
-        and ((task.deadline is not None and task.deadline <= today) or task.id in scheduled_ids)
+        and (task.deadline is None or task.deadline >= today)
+        and ((task.deadline == today) or task.id in scheduled_ids)
     ]
     return sorted(
         focus,

@@ -13,8 +13,7 @@ st.set_page_config(
 
 apply_theme()
 
-# Keep the simple everyday pages prominent, with original advanced controls
-# available under one additional menu. No legacy setting is removed.
+# Everyday navigation only. Advanced implementation remains available in source.
 page = st.navigation(
     {
         "": [
@@ -22,18 +21,6 @@ page = st.navigation(
             st.Page("workspace/views/week.py", title="Calendar", icon=":material/calendar_month:"),
             st.Page("workspace/views/task_board.py", title="Tasks", icon=":material/checklist:"),
             st.Page("workspace/views/settings.py", title="Settings", icon=":material/tune:"),
-        ],
-        "Advanced": [
-            st.Page(
-                "workspace/views/tasks.py",
-                title="Detailed Task Editor",
-                icon=":material/tune:",
-            ),
-            st.Page(
-                "workspace/views/planner.py",
-                title="Advanced Planning",
-                icon=":material/settings:",
-            ),
         ],
     },
     position="top",

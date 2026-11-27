@@ -13,14 +13,12 @@ from workspace.calendar_import import (
     imported_keys,
     parse_ics,
 )
+from workspace.categories import list_categories
 
 
 def render_calendar_import(snapshot, db_path) -> None:
-    with st.expander("Import commitments · .ics file", expanded=False):
-        st.caption(
-            "Import selected events from Google, Apple, or Outlook exports. "
-            "Preview only until you confirm; nothing is sent online."
-        )
+    with st.expander("Import calendar", expanded=False, icon=":material/upload:"):
+        st.caption("Choose an .ics file and review events before adding them.")
         upload = st.file_uploader(
             "Choose .ics file", type=["ics"], key="calendar_import_file"
         )
@@ -60,7 +58,7 @@ def render_calendar_import(snapshot, db_path) -> None:
         )
         kind = st.selectbox(
             "Category for imported events",
-            ["Appointment", "Lecture", "Personal", "Social", "Exercise", "Other"],
+            list_categories(db_path),
             key="calendar_import_category",
         )
         if st.button(

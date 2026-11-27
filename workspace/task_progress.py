@@ -82,14 +82,13 @@ def progress_details(task, checklist=(), timed_steps=(), preference=None):
     pref = preference or ProgressPreference()
     items = tuple(checklist)
     timed = tuple(step for step in timed_steps if step.kind == "timed")
-    mode = pref.mode
-    if mode == "auto":
-        mode = "checklist" if items else "time"
-    if mode == "manual":
+    # The user's explicit tracking choice wins. Auto preserves old tasks'
+    # checklist-first behavior, but adding subtasks cannot override manual mode.
+    if pref.mode == "manual":
         return pref.manual_percent, "My progress estimate"
-    if mode == "checklist" and items:
+    if pref.mode == "checklist" or (pref.mode == "auto" and items):
         checked = sum(bool(item.checked) for item in items)
-        return round(100 * checked / len(items)), "Checklist completed"
+        return (round(100 * checked / len(items)) if items else 0), "Checklist completed"
     if timed:
         estimate = max(1, sum(int(step.estimate_minutes) for step in timed))
         remaining = sum(int(step.remaining_minutes) for step in timed)
@@ -103,7 +102,12 @@ def progress_details(task, checklist=(), timed_steps=(), preference=None):
 def progress_html(task, checklist=(), timed_steps=(), preference=None):
     """Accessible sage progress bar, never calculated from *booked* study time."""
     pct, meaning = progress_details(task, checklist, timed_steps, preference)
-    label = f"{pct}% {meaning.lower()}"
+    items = tuple(checklist)
+    if items and task.status != "completed" and meaning == "Checklist completed":
+        checked = sum(bool(item.checked) for item in items)
+        label = f"{checked} of {len(items)} subtasks complete · {pct}%"
+    else:
+        label = f"{pct}% {meaning.lower()}"
     return (
         '<div class="pw-task-completion" role="progressbar" '
         f'aria-label="{escape(label, quote=True)}" '
@@ -111,3 +115,16 @@ def progress_html(task, checklist=(), timed_steps=(), preference=None):
         f'<span style="width:{pct}%"></span></div>'
         f'<div class="pw-task-completion-caption">{escape(label)}</div>'
     )
+
+
+def tracking_choice(task, task_mode: str | None, preference=None, checklist=()) -> str:
+    """Visible, persistent creation/edit choice; never inferred from *new* subtasks.
+
+    Older tasks without explicit preferences retain their old behavior.
+    """
+    if task_mode == "simple":
+        return "Simple to-do"
+    pref = preference or ProgressPreference()
+    if pref.mode == "checklist" or (pref.mode == "auto" and checklist):
+        return "Subtasks"
+    return "Progress bar"

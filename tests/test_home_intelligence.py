@@ -78,7 +78,7 @@ def test_daily_brief_uses_real_saved_bookings_and_deadline():
     result = daily_briefing((task(),), saved, NOW)
     assert "1 lecture" in result.text
     assert "2h of study planned" in result.text
-    assert "1 approaching" in result.text
+    assert "1 deadline due by Sunday" in result.text
     assert [item[3] for item in result.agenda] == ["Lecture", "Study", "Social"]
     assert "Statistics problem set" in result.upcoming[0]
 
@@ -86,8 +86,8 @@ def test_daily_brief_uses_real_saved_bookings_and_deadline():
 def test_daily_briefing_no_appointments_has_honest_empty_agenda():
     result = daily_briefing((task(due=date(2027, 1, 1)),), snapshot(), NOW)
     assert result.agenda == ()
-    assert "0 lectures" in result.text
-    assert "no deadlines" in result.text
+    assert "0 lectures" not in result.text
+    assert "Nothing booked on your calendar" in result.text
 
 
 def test_runway_progress_is_recorded_work_not_planned_blocks():
@@ -144,14 +144,13 @@ def test_no_study_hours_configured_is_not_misrepresented_as_a_guarantee():
     assert row.needs_slot_minutes == 240
 
 
-def test_overdue_work_gets_zero_future_capacity():
-    row = deadline_runway(
+def test_overdue_work_is_not_shown_on_home_runway():
+    rows = deadline_runway(
         (task(due=date(2026, 11, 24)),),
         snapshot(windows=(TimeWindow(1, TOMORROW, 8 * 60, 12 * 60),)),
         NOW,
-    )[0]
-    assert row.days_left == -1
-    assert row.open_capacity_minutes == 0
+    )
+    assert rows == ()
 
 
 def test_same_shared_capacity_appears_on_multiple_tasks_without_claiming_both_fit():

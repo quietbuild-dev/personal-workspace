@@ -59,15 +59,25 @@ def _minute_bounds(day: date, events, previous, proposed):
 
 
 def _column(day, events, slots, other, steps, lower, upper, title):
-    scale = 0.60
+    scale = 1.20
     height = int((upper - lower) * scale)
-    html = [f'<section class="cmp-panel"><h4>{title}</h4><div class="cmp-axis">']
+    html = [
+        f'<section class="cmp-panel"><h4>{title}</h4>'
+        f'<div class="cmp-axis" style="position:relative;min-height:{height + 8}px;'
+        'padding-left:50px;display:block">'
+    ]
     for minute in range((lower // 60) * 60, upper, 60):
         y = (minute - lower) * scale
         if y < 0:
             continue
-        html.append(f'<span class="cmp-tick" style="top:{y:.1f}px">{format_time(minute)}</span>')
-    html.append(f'<div class="cmp-canvas" style="height:{height}px">')
+        html.append(
+            '<span class="cmp-tick" style="position:absolute;display:block;'
+            f'left:5px;top:{y:.1f}px;white-space:nowrap;min-width:40px">'
+            f"{format_time(minute)}</span>"
+        )
+    html.append(
+        f'<div class="cmp-canvas" style="position:relative;height:{height}px;display:block">'
+    )
     for minute in range((lower // 60 + 1) * 60, upper, 60):
         y = (minute - lower) * scale
         html.append(f'<div class="cmp-line" style="top:{y:.1f}px"></div>')
@@ -81,8 +91,10 @@ def _column(day, events, slots, other, steps, lower, upper, title):
             slot.day == day and slot.start < event.end and event.start < slot.end for slot in slots
         )
         lane = "right:50%;" if conflict else ""
+        compact = " cmp-compact" if block_height < 42 else ""
+        tiny = " cmp-tiny" if block_height < 16 else ""
         html.append(
-            f'<div class="cmp-event cmp-{event_type}" '
+            f'<div class="cmp-event cmp-{event_type}{compact}{tiny}" '
             f'style="top:{y:.1f}px;height:{block_height:.1f}px;{lane}" '
             f'title="{escape(event.title, quote=True)} | {when}">'
             f"{escape(event.title)}<small>{when}</small></div>"
@@ -99,8 +111,10 @@ def _column(day, events, slots, other, steps, lower, upper, title):
             for event in events
         )
         lane = "left:50%;" if conflict else ""
+        compact = " cmp-compact" if block_height < 42 else ""
+        tiny = " cmp-tiny" if block_height < 16 else ""
         html.append(
-            f'<div class="cmp-event cmp-study cmp-{state}" '
+            f'<div class="cmp-event cmp-study cmp-{state}{compact}{tiny}" '
             f'style="top:{y:.1f}px;height:{block_height:.1f}px;{lane}" '
             f'title="{escape(label, quote=True)} | {when}">'
             f"{escape(label)}<small>{when}</small></div>"
@@ -115,30 +129,37 @@ def before_after_html(day, events, previous, proposed, steps) -> str:
         raise ValueError("Select a calendar date.")
     lower, upper = _minute_bounds(day, events, previous, proposed)
     style = """<style>
-    .cmp-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;color:#e3ebe5}
+    .cmp-layout{display:grid;grid-template-columns:repeat(2,minmax(390px,1fr));
+        max-width:1180px;margin:0 auto;gap:18px;color:#e3ebe5}
     .cmp-panel{min-width:0;overflow:hidden;border:1px solid #36433c;border-radius:10px;
     background:#171d1b}
     .cmp-panel h4{font-size:14px;letter-spacing:.01em;padding:11px 15px;margin:0;
     border-bottom:1px solid #36433c}
     .cmp-axis{position:relative;padding-left:45px;}
-    .cmp-tick{position:absolute;left:5px;font-size:10px;color:#9eaea4;transform:translateY(-50%)}
+    .cmp-tick{position:absolute!important;display:block!important;left:5px;
+      font-size:10px;color:#9eaea4;transform:translateY(-50%);white-space:nowrap}
     .cmp-canvas{position:relative;border-left:1px solid #425047;margin:0 6px 8px 0}
     .cmp-line{position:absolute;left:0;right:0;border-top:1px solid #2d3632}
-    .cmp-event{position:absolute;left:5px;right:5px;border-radius:5px;overflow:hidden;
-      z-index:1;box-sizing:border-box;padding:3px 5px;font-size:11px;font-weight:600;
-      line-height:1.2;overflow-wrap:anywhere;border-left:3px solid #bdcfbe}
-    .cmp-event small{display:block;font-weight:400;font-size:10px;opacity:.85}
+    .cmp-event{position:absolute;left:5px;right:5px;border-radius:5px;
+      z-index:1;box-sizing:border-box;padding:5px 8px;font-size:12px;font-weight:600;
+      line-height:1.25;overflow:hidden;border-left:3px solid #bdcfbe;
+      white-space:normal;overflow-wrap:anywhere;}
+    .cmp-event small{display:block;font-weight:400;font-size:10px;opacity:.85;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
+    .cmp-event.cmp-compact{padding:2px 5px;white-space:nowrap;text-overflow:ellipsis;}
+    .cmp-event.cmp-compact small,.cmp-event.cmp-tiny small{display:none;}
+    .cmp-event.cmp-tiny{font-size:0;padding:0;}
     .cmp-study{background:#506c56;color:#f4faf5;border-color:#aac9ae}
-    .cmp-old{background:#3f4a48;color:#e5ebe6;border:1px dashed #9caaa1;
-    border-left:3px solid #b3c1b6}
+    .cmp-old{background:#4b4354;color:#f0e9f4;border:1px solid #80758c;
+    border-left:3px solid #c3accf}
     .cmp-new{background:#668b70;color:#fff;border-left:3px solid #c2e6c9}
-    .cmp-same{opacity:.55}
+    .cmp-same{opacity:.9}
     .cmp-lecture{background:#425e76;color:#eef6ff;border-color:#95bbdf}
     .cmp-social{background:#744F65;color:#fff5f9;border-color:#D99EBB}
     .cmp-exercise{background:#48695d;color:#edfff2;border-color:#90cbb2}
     .cmp-appointment,.cmp-other,.cmp-personal{background:#5d5b58;color:#fff;border-color:#a6a19a}
-    @media(max-width:560px){.cmp-layout{gap:5px}.cmp-event{font-size:9px;padding:2px}
-    .cmp-event small{display:none}}
+    @media(max-width:1000px){.cmp-layout{display:flex;flex-direction:column;gap:14px}}
+    @media(max-width:560px){.cmp-event{font-size:11px}.cmp-event small{display:none}}
     </style>"""
     return (
         style

@@ -200,6 +200,7 @@ def calendar_html(
     *,
     today=None,
     session_links=None,
+    category_colors=None,
 ) -> str:
     """Accessible, aligned CSS calendar for the everyday Day/Week screen.
 
@@ -212,14 +213,14 @@ def calendar_html(
         raise ValueError("Choose a day or a single calendar week.")
     days = [first_day + timedelta(days=i) for i in range((last_day - first_day).days + 1)]
     lower, upper = _calendar_bounds(events, slots, (), first_day, last_day)
-    px_per_minute = 0.85
+    px_per_minute = 1.20
     total_height = int((upper - lower) * px_per_minute)
     day_count = len(days)
-    minimum_width = 375 if day_count == 1 else 880
+    minimum_width = 340 if day_count == 1 else 880
     markup = [
         """<style>
-    .wp-scroll {overflow-x:auto; border:1px solid #343c3b; border-radius:12px;
-        background:#171b1c; margin:10px 0 14px;}
+    .wp-scroll {overflow-x:auto; width:min(100%,980px); border:1px solid #343c3b;
+        border-radius:12px; background:#171b1c; margin:10px auto 16px;}
     .wp-calendar {display:grid; grid-template-columns:62px repeat(var(--days),minmax(0,1fr));
         min-width:var(--calendar-min); font-family:inherit; color:#dee4df;}
     .wp-day-name {height:45px; display:flex; align-items:center; justify-content:center;
@@ -230,7 +231,7 @@ def calendar_html(
     .wp-clock-label {position:absolute; right:9px; transform:translateY(-50%);}
     .wp-day-column {position:relative; border-left:1px solid #303a38;
         background-image:linear-gradient(to bottom,#303a38 1px,transparent 1px);
-        background-size:100% 51px; background-repeat:repeat-y;}
+        background-size:100% 72px; background-repeat:repeat-y;}
     .wp-scroll .wp-calendar .wp-block {position:absolute; left:4px; right:4px; overflow:hidden;
     border-radius:6px;
         text-decoration:none!important; display:block; cursor:pointer;
@@ -268,6 +269,12 @@ def calendar_html(
     .wp-next {font-size:10px;opacity:.90;white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis;}
     .wp-today {color:#d9efdc; background:#27332e;}
+    /* Short blocks stay inside their own rectangle, never float over neighbors. */
+    .wp-block.wp-short {padding:1px 4px!important;font-size:11px!important;z-index:1;}
+    .wp-block.wp-short .wp-block-title {display:block;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis;line-height:1.15;}
+    .wp-block.wp-tiny .wp-block-title {display:none;}
+    .wp-block:hover {z-index:3;}
     </style>""",
         CALENDAR_CSS,
     ]
@@ -359,9 +366,30 @@ def calendar_html(
             )
             tag = "a" if target else "div"
             link = f' href="?{target}" target="_self"' if target else ""
+            known_kinds = {
+                "study",
+                "lecture",
+                "social",
+                "exercise",
+                "personal",
+                "appointment",
+                "other",
+            }
+            css_kind = kind if kind in known_kinds else "other"
+            pastel = (category_colors or {}).get(
+                next((name for name in (category_colors or {}) if name.lower() == kind), ""),
+            )
+            custom_style = (
+                f"background:{pastel};color:#1D1B24;border-color:{pastel};"
+                if pastel and kind not in known_kinds
+                else ""
+            )
+            size_class = " wp-tiny" if height < 15 else " wp-short" if height < 30 else ""
             markup.append(
-                f'<{tag} class="wp-block wp-{kind}" title="{tooltip}"{link} '
-                f'style="top:{top:.1f}px;height:{height:.1f}px;{lane_style}">'
+                f'<{tag} class="wp-block wp-{css_kind}{size_class}" '
+                f'title="{tooltip}"{link} '
+                f'style="top:{top:.1f}px;height:{height:.1f}px;'
+                f'{lane_style}{custom_style}">'
                 f'<div class="wp-block-title">{safe_title}</div>'
             )
             if related_step and height >= 35:
@@ -436,7 +464,7 @@ def render_weekly_calendar(db_path: Path) -> None:
         return
     notice = st.session_state.pop("calendar_notice", None)
     if notice:
-        st.success(notice)
+        st.toast(notice)
     now = datetime.now()
     today = now.date()
     monday, sunday = week_bounds(today)
@@ -561,9 +589,9 @@ def render_weekly_calendar(db_path: Path) -> None:
             )
             w_cols = st.columns(2)
             with w_cols[0]:
-                w_start = st.time_input("Available from", value=time(9, 0), step=900)
+                w_start = st.time_input("Available from", value=time(9, 0), step=300)
             with w_cols[1]:
-                w_end = st.time_input("Available until", value=time(12, 0), step=900)
+                w_end = st.time_input("Available until", value=time(12, 0), step=300)
             w_save = st.form_submit_button("Add time window")
         if w_save:
             _save_or_report(
@@ -579,9 +607,9 @@ def render_weekly_calendar(db_path: Path) -> None:
             e_day = st.date_input("Commitment date", value=today, key="fixed_event_day")
             e_cols = st.columns(2)
             with e_cols[0]:
-                e_start = st.time_input("Commitment starts", value=time(10, 0), step=900)
+                e_start = st.time_input("Commitment starts", value=time(10, 0), step=300)
             with e_cols[1]:
-                e_end = st.time_input("Commitment ends", value=time(11, 0), step=900)
+                e_end = st.time_input("Commitment ends", value=time(11, 0), step=300)
             e_save = st.form_submit_button("Add fixed commitment")
         if e_save:
             _save_or_report(
@@ -712,7 +740,7 @@ def render_weekly_calendar(db_path: Path) -> None:
                         f"due {due} · {desc}."
                     )
             else:
-                st.success("All timed work in this proposal is accounted for this week.")
+                st.caption("All timed work in this proposal is accounted for this week.")
             accept_col, reject_col = st.columns(2)
             with accept_col:
                 if st.button(

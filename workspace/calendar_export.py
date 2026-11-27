@@ -7,6 +7,7 @@ DTSTART/DTEND values let calendar clients interpret the user's local times.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from workspace.advanced_planner import PlannerSnapshot
 
@@ -109,3 +110,23 @@ def build_calendar_ics(
     return ("\r\n".join(fragment for line in lines for fragment in _fold(line)) + "\r\n").encode(
         "utf-8"
     )
+
+
+def save_calendar_to_downloads(
+    ics_content: bytes, selected_week_start: date, downloads_dir: Path | None = None
+) -> Path:
+    """Save an explicit local export without overwriting an existing .ics file."""
+    folder = Path.home() / "Downloads" if downloads_dir is None else Path(downloads_dir)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"Downloads folder not found: {folder}")
+    name = f"personal-workspace-{selected_week_start.isoformat()}"
+    for sequence in range(1, 1001):
+        suffix = "" if sequence == 1 else f"-{sequence}"
+        output = folder / f"{name}{suffix}.ics"
+        try:
+            with output.open("xb") as stream:
+                stream.write(ics_content)
+        except FileExistsError:
+            continue
+        return output
+    raise FileExistsError("There are already too many copies of this calendar export.")

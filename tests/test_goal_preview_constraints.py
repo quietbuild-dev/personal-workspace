@@ -33,7 +33,7 @@ def test_goal_previews_do_not_require_unachievable_complete_coverage():
     ui.session_state = {}
     ui.expander.side_effect = lambda *_, **__: nullcontext()
     ui.selectbox.return_value = "deadlines"
-    ui.button.side_effect = lambda label, **_: label in ("Preview schedule", "Compare all goals")
+    ui.button.side_effect = lambda label, **_: label in ("Preview schedule", "Compare goals")
     ui.radio.return_value = "Current goal"
     with patch.dict(sys.modules, {"streamlit": ui}):
         spec = importlib.util.spec_from_file_location("test_goal_constraints", FILE)

@@ -83,3 +83,19 @@ def weekly_replay(snapshot: PlannerSnapshot, week_of: date) -> WeeklyReplay:
         for title, count in sorted(groups.items(), key=lambda it: (-it[1][0], it[0]))
     )
     return WeeklyReplay(monday, sunday, tuple(days), subjects)
+
+
+def completed_tasks_in_week(tasks, monday: date, sunday: date) -> int:
+    """Count only tasks with real completion timestamps in the requested week."""
+    return sum(
+        task.status == "completed"
+        and task.completed_at is not None
+        and monday
+        <= (
+            task.completed_at.astimezone().date()
+            if task.completed_at.tzinfo
+            else task.completed_at.date()
+        )
+        <= sunday
+        for task in tasks
+    )

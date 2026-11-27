@@ -101,6 +101,7 @@ def optimize(
     dna: StudyDNA | None = None,
     compact: bool = False,
     require_task_ids: frozenset[int] = frozenset(),
+    gap_minutes: int = 0,
 ) -> OptimizationResult:
     """Lexicographic objectives; OPTIMAL only when every level is proven.
 
@@ -119,6 +120,8 @@ def optimize(
         raise ValueError("Expected a frozen set of required task IDs.")
     if not 0 < time_limit <= 30:
         raise ValueError("Solver time limit must be between zero and 30 seconds.")
+    if gap_minutes not in (0, 5, 10, 15):
+        raise ValueError("Choose a valid break preference.")
     tick = perf_counter()
     # Also validates the input and supplies a safe fallback before calling native code.
     baseline = make_revision(
@@ -130,8 +133,11 @@ def optimize(
     validate_revision(snapshot, baseline, now)
 
     def fallback(status, message, solver_seconds=0.0):
+        from workspace.study_breaks import prefer_study_gaps
+
+        softened = prefer_study_gaps(snapshot, baseline, now, gap_minutes)
         return OptimizationResult(
-            baseline,
+            softened,
             goal,
             "greedy",
             status,
@@ -158,6 +164,7 @@ def optimize(
             dna,
             compact,
             require_task_ids,
+            gap_minutes,
         )
     except (RuntimeError, ValueError, OverflowError) as error:
         return fallback(
@@ -180,6 +187,7 @@ def _solve(
     dna,
     compact,
     require_task_ids,
+    gap_minutes,
 ):
     model = cp.CpModel()
     monday, sunday = week_bounds(now.date())
@@ -225,14 +233,15 @@ def _solve(
                 continue
             if step.deadline == day and step.deadline_minute is not None:
                 b = min(b, step.deadline_minute)
-            if a >= b:
+            if b - a < 20 or step.remaining_minutes < 20:
                 continue
             key = f"{step.id}_{day}_{a}"
             start = model.new_int_var(a, b, "start_" + key)
             end = model.new_int_var(a, b, "end_" + key)
             amount = model.new_int_var(0, min(b - a, step.remaining_minutes), "dur_" + key)
             present = model.new_bool_var("use_" + key)
-            model.add(amount >= 1).only_enforce_if(present)
+            # Minimum viable new focus block; short remainders stay unscheduled.
+            model.add(amount >= 20).only_enforce_if(present)
             model.add(amount == 0).only_enforce_if(present.Not())
             model.add(end == start + amount)
             interval = model.new_optional_interval_var(start, amount, end, present, key)
@@ -407,6 +416,9 @@ def _solve(
             "The search did not improve the baseline for this goal; showing the greedy plan.",
             search_seconds,
         )
+    from workspace.study_breaks import prefer_study_gaps
+
+    proposal = prefer_study_gaps(snapshot, proposal, now, gap_minutes)
     return OptimizationResult(
         proposal,
         goal,

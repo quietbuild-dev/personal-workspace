@@ -89,6 +89,10 @@ def initialize_advanced(db_path: Path) -> None:
                 actual_minutes INTEGER NOT NULL DEFAULT 0 CHECK(actual_minutes >= 0),
                 CHECK(start_minute >= 0 AND end_minute <= 1440 AND start_minute < end_minute)
             );
+            CREATE TABLE IF NOT EXISTS study_break_preferences (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                minutes INTEGER NOT NULL CHECK(minutes IN (0,5,10,15))
+            );
             CREATE TABLE IF NOT EXISTS day_study_budgets (
                 day TEXT PRIMARY KEY,
                 minutes INTEGER NOT NULL CHECK(minutes BETWEEN 0 AND 840)
@@ -99,6 +103,14 @@ def initialize_advanced(db_path: Path) -> None:
             );
             CREATE TABLE IF NOT EXISTS task_categories (
                 name TEXT PRIMARY KEY CHECK(length(trim(name)) BETWEEN 1 AND 40)
+            );
+            CREATE TABLE IF NOT EXISTS fixed_event_notes (
+                event_id INTEGER PRIMARY KEY REFERENCES fixed_events(id) ON DELETE CASCADE,
+                notes TEXT NOT NULL DEFAULT '' CHECK(length(notes) <= 4000)
+            );
+            CREATE TABLE IF NOT EXISTS event_category_overrides (
+                event_id INTEGER PRIMARY KEY REFERENCES fixed_events(id) ON DELETE CASCADE,
+                category TEXT NOT NULL CHECK(length(trim(category)) BETWEEN 1 AND 40)
             );
             CREATE TABLE IF NOT EXISTS fixed_event_kinds (
                 event_id INTEGER PRIMARY KEY REFERENCES fixed_events(id) ON DELETE CASCADE,
@@ -235,6 +247,42 @@ def add_window(db_path: Path, day: date, start: int, end: int) -> int:
 EVENT_KINDS = ("Lecture", "Appointment", "Personal", "Social", "Exercise", "Other")
 
 
+def _event_category_choice(conn, category: str) -> tuple[str, str | None]:
+    """Native kind stays in the legacy CHECK-constrained table; custom label is separate."""
+    if category in EVENT_KINDS:
+        return category, None
+    if not isinstance(category, str):
+        raise ValueError("Choose an existing category.")
+    try:
+        row = conn.execute(
+            "SELECT name FROM workspace_categories WHERE name=? COLLATE NOCASE",
+            (category,),
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        raise ValueError("Save the new category before using it.") from error
+    if row is None:
+        raise ValueError("Save the new category before using it.")
+    return "Other", row[0]
+
+
+def _valid_event_notes(notes: str) -> str:
+    if not isinstance(notes, str) or len(notes) > 4000:
+        raise ValueError("Event notes must be shorter than 4,000 characters.")
+    return notes.strip()
+
+
+def get_event_notes(db_path: Path, event_id: int) -> str:
+    """Read optional notes for a saved event without changing its calendar identity."""
+    if type(event_id) is not int or event_id <= 0:
+        raise ValueError("Choose a valid event.")
+    initialize_advanced(db_path)
+    with closing(_connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT notes FROM fixed_event_notes WHERE event_id=?", (event_id,)
+        ).fetchone()
+        return row[0] if row else ""
+
+
 def add_fixed_event(
     db_path: Path,
     title: str,
@@ -242,19 +290,31 @@ def add_fixed_event(
     start: int,
     end: int,
     kind: str = "Appointment",
+    notes: str = "",
 ) -> int:
+    notes = _valid_event_notes(notes)
     title = _valid_title(title)
     _valid_interval(day, start, end)
-    if kind not in EVENT_KINDS:
-        raise ValueError("Choose a supported event category.")
     initialize_advanced(db_path)
+    with closing(_connect(db_path)) as check_conn:
+        stored, override = _event_category_choice(check_conn, kind)
     with closing(_connect(db_path)) as conn, conn:
         cursor = conn.execute(
             "INSERT INTO fixed_events(title,day,start_minute,end_minute) VALUES(?,?,?,?)",
             (title, day.isoformat(), start, end),
         )
         event_id = cursor.lastrowid
-        conn.execute("INSERT INTO fixed_event_kinds(event_id,kind) VALUES(?,?)", (event_id, kind))
+        conn.execute("INSERT INTO fixed_event_kinds(event_id,kind) VALUES(?,?)", (event_id, stored))
+        if override:
+            conn.execute(
+                "INSERT INTO event_category_overrides(event_id,category) VALUES (?,?)",
+                (event_id, override),
+            )
+        if notes:
+            conn.execute(
+                "INSERT INTO fixed_event_notes(event_id,notes) VALUES(?,?)",
+                (event_id, notes),
+            )
         return event_id
 
 
@@ -266,12 +326,17 @@ def update_fixed_event(
     start: int,
     end: int,
     kind: str = "Appointment",
+    notes: str | None = None,
 ) -> None:
+    if notes is not None:
+        notes = _valid_event_notes(notes)
     title = _valid_title(title)
     _valid_interval(day, start, end)
-    if type(event_id) is not int or event_id <= 0 or kind not in EVENT_KINDS:
-        raise ValueError("Choose a valid event and category.")
+    if type(event_id) is not int or event_id <= 0:
+        raise ValueError("Choose a valid event.")
     initialize_advanced(db_path)
+    with closing(_connect(db_path)) as check_conn:
+        stored, override = _event_category_choice(check_conn, kind)
     with closing(_connect(db_path)) as conn, conn:
         result = conn.execute(
             "UPDATE fixed_events SET title=?,day=?,start_minute=?,end_minute=? WHERE id=?",
@@ -282,8 +347,23 @@ def update_fixed_event(
         conn.execute(
             "INSERT INTO fixed_event_kinds(event_id,kind) VALUES(?,?) "
             "ON CONFLICT(event_id) DO UPDATE SET kind=excluded.kind",
-            (event_id, kind),
+            (event_id, stored),
         )
+        conn.execute("DELETE FROM event_category_overrides WHERE event_id=?", (event_id,))
+        if override:
+            conn.execute(
+                "INSERT INTO event_category_overrides(event_id,category) VALUES (?,?)",
+                (event_id, override),
+            )
+        if notes is not None:
+            if notes:
+                conn.execute(
+                    "INSERT INTO fixed_event_notes(event_id,notes) VALUES(?,?) "
+                    "ON CONFLICT(event_id) DO UPDATE SET notes=excluded.notes",
+                    (event_id, notes),
+                )
+            else:
+                conn.execute("DELETE FROM fixed_event_notes WHERE event_id=?", (event_id,))
 
 
 def list_task_categories(db_path: Path) -> tuple[str, ...]:
@@ -393,8 +473,12 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
     event_rows = conn.execute("SELECT * FROM fixed_events ORDER BY id").fetchall()
     session_rows = conn.execute("SELECT * FROM scheduled_sessions ORDER BY id").fetchall()
     budget_rows = conn.execute("SELECT * FROM day_study_budgets ORDER BY day").fetchall()
+    break_rows = conn.execute("SELECT * FROM study_break_preferences ORDER BY singleton").fetchall()
     deadline_rows = conn.execute("SELECT * FROM task_deadline_times ORDER BY task_id").fetchall()
     kind_rows = conn.execute("SELECT * FROM fixed_event_kinds ORDER BY event_id").fetchall()
+    category_rows = conn.execute(
+        "SELECT * FROM event_category_overrides ORDER BY event_id"
+    ).fetchall()
     preference_rows = conn.execute("SELECT * FROM day_focus_preferences ORDER BY day").fetchall()
     dependency_rows = conn.execute(
         "SELECT * FROM task_dependencies ORDER BY task_id, prerequisite_id"
@@ -409,8 +493,10 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
             event_rows,
             session_rows,
             budget_rows,
+            break_rows,
             deadline_rows,
             kind_rows,
+            category_rows,
             preference_rows,
             dependency_rows,
         )
@@ -421,6 +507,7 @@ def _fetch_snapshot(conn: sqlite3.Connection) -> PlannerSnapshot:
     parents = {row["id"]: row for row in parent_rows}
     due_times = {row["task_id"]: row["minute"] for row in deadline_rows}
     kinds = {row["event_id"]: row["kind"] for row in kind_rows}
+    kinds.update({row["event_id"]: row["category"] for row in category_rows})
     steps = tuple(
         StudyStep(
             id=row["id"],
@@ -632,8 +719,9 @@ def undo_last_plan(db_path: Path, now: datetime | None = None) -> int:
             restored = _fetch_snapshot(conn)
             if accepted_conflicts(restored, now):
                 raise ValueError(
-                    "The previous plan now conflicts with existing commitments "
-                    "or preferences. Please review a new suggestion instead."
+                    "Some times from your previous plan are now occupied. "
+                    "Undo can't restore overlapping study sessions. "
+                    "Review a new schedule instead."
                 )
             conn.execute("DELETE FROM last_plan_undo WHERE singleton=1")
             conn.commit()

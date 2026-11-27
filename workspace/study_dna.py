@@ -4,6 +4,7 @@ This module has no Streamlit dependency; preferences are soft scheduling goals,
 not rigid restrictions on when a person is permitted to work.
 """
 
+import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -21,6 +22,29 @@ DISTRIBUTIONS = ("steady", "batch", "none")
 FLEXIBILITY = ("stable", "moderate", "open")
 
 
+def custom_focus_range(value: str) -> tuple[int, int] | None:
+    """Parse custom:HHMM-HHMM; custom focus hours are soft preferences."""
+    match = re.fullmatch(r"custom:(\d{2})(\d{2})-(\d{2})(\d{2})", value)
+    if not match:
+        return None
+    start_h, start_m, end_h, end_m = map(int, match.groups())
+    if start_h > 23 or start_m > 59 or end_h > 24 or end_m > 59:
+        return None
+    if end_h == 24 and end_m != 0:
+        return None
+    start = 60 * start_h + start_m
+    end = 60 * end_h + end_m
+    return (start, end) if 0 <= start < end <= 1440 else None
+
+
+def custom_concentration(start: int, end: int) -> str:
+    """Store 24-hour focus times without changing the existing SQLite schema."""
+    if not (isinstance(start, int) and isinstance(end, int)
+            and 0 <= start < end <= 1440):
+        raise ValueError("Focus finish time must be after the start time.")
+    return f"custom:{start // 60:02d}{start % 60:02d}-{end // 60:02d}{end % 60:02d}"
+
+
 @dataclass(frozen=True)
 class StudyDNA:
     name: str = ""
@@ -32,7 +56,8 @@ class StudyDNA:
     def __post_init__(self):
         if not isinstance(self.name, str) or len(self.name.strip()) > 35:
             raise ValueError("Display name must contain at most 35 characters.")
-        if self.concentration not in CONCENTRATION:
+        if (self.concentration not in CONCENTRATION
+                and custom_focus_range(self.concentration) is None):
             raise ValueError("Choose a valid concentration window.")
         if self.session_length not in SESSION_LENGTHS:
             raise ValueError("Choose a valid session length.")
@@ -44,7 +69,11 @@ class StudyDNA:
 
     @property
     def focus_window(self) -> tuple[int, int] | None:
-        return CONCENTRATION[self.concentration]
+        return (
+            CONCENTRATION[self.concentration]
+            if self.concentration in CONCENTRATION
+            else custom_focus_range(self.concentration)
+        )
 
     @property
     def minimum_session(self) -> int:

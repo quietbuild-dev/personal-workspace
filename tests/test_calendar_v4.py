@@ -79,7 +79,7 @@ class CalendarV4Tests(unittest.TestCase):
         accept_revision(self.db, revision, NOW)
         self.assertTrue(has_undo_plan(self.db))
         fingerprint = load_snapshot(self.db).fingerprint
-        with self.assertRaisesRegex(ValueError, "conflicts"):
+        with self.assertRaisesRegex(ValueError, "overlapping study sessions"):
             undo_last_plan(self.db, NOW)
         self.assertEqual(load_snapshot(self.db).fingerprint, fingerprint)
         self.assertEqual(
@@ -87,7 +87,7 @@ class CalendarV4Tests(unittest.TestCase):
             [(10 * 60, 11 * 60)],
         )
 
-    def test_comparison_is_neutral_and_uses_sage_new_blocks(self):
+    def test_comparison_uses_current_theme_for_new_blocks(self):
         self._planned()
         snapshot = load_snapshot(self.db)
         session = snapshot.sessions[0]
@@ -96,8 +96,8 @@ class CalendarV4Tests(unittest.TestCase):
         old = (Slot(session.step_id, TODAY, session.start, session.end),)
         new = (Slot(session.step_id, TODAY + timedelta(days=1), 900, 960),)
         html = before_after_html(TODAY, (), old, new, {s.id: s for s in snapshot.steps})
-        self.assertIn("#3f4a48", html)
-        self.assertIn("#668b70", html)
+        self.assertIn("#22222B", html)
+        self.assertIn("#6F5B83", html)
         self.assertNotIn("#775d35", html)
 
 

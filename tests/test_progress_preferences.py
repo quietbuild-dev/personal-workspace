@@ -39,11 +39,12 @@ def test_manual_percentage_is_local_and_does_not_count_as_logged_study(tmp_path)
     assert task_id not in load_progress_preferences(alice)
 
 
-def test_checklist_first_even_when_time_is_logged():
+def test_explicit_progress_mode_wins_over_optional_checklist():
     task = SimpleNamespace(status="pending", remaining_minutes=90, estimate_minutes=120)
     checks = [SimpleNamespace(checked=True), SimpleNamespace(checked=False)]
     timed = [SimpleNamespace(kind="timed", estimate_minutes=120, remaining_minutes=90)]
     assert progress_details(task, checks, timed) == (50, "Checklist completed")
+    # The user's saved choice remains authoritative even when subtasks exist.
     assert progress_details(task, checks, timed, ProgressPreference("time")) == (
         25,
         "Work completed",
@@ -51,6 +52,10 @@ def test_checklist_first_even_when_time_is_logged():
     assert progress_details(task, checks, timed, ProgressPreference("manual", 30)) == (
         30,
         "My progress estimate",
+    )
+    assert progress_details(task, checks, timed, ProgressPreference("checklist")) == (
+        50,
+        "Checklist completed",
     )
 
 

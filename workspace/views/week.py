@@ -8,46 +8,54 @@ import streamlit as st
 
 from workspace.advanced_planner import Slot, accepted_conflicts, format_time, week_bounds
 from workspace.advanced_repository import (
-    EVENT_KINDS,
     StaleProposalError,
     accept_revision,
-    add_fixed_event,
     delete_fixed_event,
+    get_event_notes,
     load_snapshot,
     plan_undo_status,
     record_session,
     save_week_preferences,
     update_fixed_event,
 )
-from workspace.calendar_export import build_calendar_ics
+from workspace.calendar_export import build_calendar_ics, save_calendar_to_downloads
+from workspace.categories import category_colors, create_category, list_categories
 from workspace.conflict_analysis import analyze_conflicts
 from workspace.deadline_guarantees import check_required_coverage
 from workspace.life_planning import undo_last_plan_with_protection as undo_last_plan
-from workspace.manual_planning import move_proposed_block
 from workspace.optimizer import GOALS
 from workspace.planning_insights import (
     assess_proposal,
     compare_plans,
-    scenario_unavailable,
     schedule_metrics,
 )
+from workspace.recurrence import (
+    FREQUENCIES,
+    add_recurring_event,
+    delete_recurring_series,
+    series_info,
+)
 from workspace.repository import DEFAULT_DB_PATH, list_tasks
+from workspace.stale_bookings import (
+    outdated_planned_sessions,
+    outdated_undo_available,
+    remove_outdated_bookings,
+    undo_outdated_cleanup,
+)
 from workspace.study_dna import load_study_dna, required_task_ids
 from workspace.theme import priority_badge
 from workspace.views.calendar_import import render_calendar_import
 from workspace.views.energy_today import render_energy_today
 from workspace.views.goal_preview import choose_goal_preview
 from workspace.views.life_time import render_time_protection
+from workspace.views.plan_doctor import render_plan_doctor
 from workspace.views.schedule_comparison import (
     before_after_html,
     changed_days,
-    format_slot,
-    schedule_changes,
 )
-from workspace.views.schedule_lab import render_schedule_lab
 from workspace.views.weekly_calendar import _agenda, calendar_html, study_label
 
-TIME_CHOICES = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)] + ["24:00"]
+TIME_CHOICES = [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 5)] + ["24:00"]
 
 
 def _as_minute(value: str) -> int:
@@ -56,8 +64,14 @@ def _as_minute(value: str) -> int:
 
 
 def _time_index(minute: int) -> int:
-    # UI works in half hours; saved legacy minutes round for initial selection only.
+    # Five-minute input choices; preserve exact imported times when editing events.
     return min(range(len(TIME_CHOICES)), key=lambda i: abs(_as_minute(TIME_CHOICES[i]) - minute))
+
+
+def _event_time_choices(*saved_minutes: int) -> list[str]:
+    """Keep exact imported times in the edit form, even if not on a five-minute grid."""
+    extras = [f"{minute // 60:02d}:{minute % 60:02d}" for minute in saved_minutes]
+    return sorted(set(TIME_CHOICES).union(extras), key=_as_minute)
 
 
 def _save(action, success: str) -> None:
@@ -75,24 +89,60 @@ def _save(action, success: str) -> None:
 
 def _event_form(snapshot, today: date) -> None:
     with st.popover("+ Add event"):
+        repeat = st.selectbox(
+            "Repeat",
+            FREQUENCIES,
+            format_func=lambda option: "Does not repeat" if option == "Never" else option,
+            key="new_event_repeat",
+        )
+        event_categories = list_categories(DEFAULT_DB_PATH)
+        kind_choice = st.selectbox(
+            "Category",
+            [*event_categories, "+ New category"],
+            key="calendar_event_category_choice",
+        )
+        new_kind = (
+            st.text_input("New category name", max_chars=40, key="calendar_event_new_category")
+            if kind_choice == "+ New category"
+            else ""
+        )
         with st.form("add_calendar_event", clear_on_submit=True):
             name = st.text_input("Event", placeholder="e.g. Statistics lecture")
-            kind = st.selectbox("Type", EVENT_KINDS)
             day = st.date_input("Date", value=today, format="DD/MM/YYYY")
             a, b = st.columns(2, gap="small")
             with a:
                 start = st.selectbox("From", TIME_CHOICES[:-1], index=_time_index(10 * 60))
             with b:
                 end = st.selectbox("To", TIME_CHOICES, index=_time_index(11 * 60))
+            notes = st.text_area("Notes (optional)", max_chars=4000, height=85)
+            repeat_days = {"Daily": 30, "Weekly": 180, "Monthly": 365, "Yearly": 731}
+            until = (
+                st.date_input(
+                    "Repeat until (inclusive)",
+                    value=day + timedelta(days=repeat_days.get(repeat, 0)),
+                    min_value=day,
+                    max_value=day + timedelta(days=731),
+                    format="DD/MM/YYYY",
+                    key=f"new_event_repeat_until_{repeat}",
+                )
+                if repeat != "Never"
+                else day
+            )
             if st.form_submit_button("Save event", type="primary"):
                 _save(
-                    lambda: add_fixed_event(
+                    lambda: add_recurring_event(
                         DEFAULT_DB_PATH,
                         name,
                         day,
                         _as_minute(start),
                         _as_minute(end),
-                        kind,
+                        create_category(
+                            DEFAULT_DB_PATH,
+                            new_kind if kind_choice == "+ New category" else kind_choice,
+                        ),
+                        repeat,
+                        until,
+                        notes=notes,
                     ),
                     "Event saved. Any affected study plans can be reviewed below.",
                 )
@@ -164,50 +214,93 @@ def _preferences(snapshot, today: date, sunday: date) -> None:
 
 def _selected_event(snapshot, selected_id: int) -> None:
     event = next((item for item in snapshot.events if item.id == selected_id), None)
-    if not event:
-        st.warning("That event no longer exists.")
+    if event is None:
+        st.warning("This event no longer exists.")
         return
+    series = series_info(DEFAULT_DB_PATH, event.id)
     with st.container(border=True):
-        st.subheader(event.title)
-        st.caption(
-            f"{event.kind} · {event.day:%d/%m/%Y} · "
-            f"{format_time(event.start)}–{format_time(event.end)}"
-        )
-        with st.expander("Edit event"):
-            with st.form(f"edit_event_{event.id}"):
-                title = st.text_input("Event name", value=event.title)
-                kind = st.selectbox(
-                    "Type",
-                    EVENT_KINDS,
-                    index=EVENT_KINDS.index(event.kind) if event.kind in EVENT_KINDS else 1,
+        title_area, close_area = st.columns([5, 1], vertical_alignment="center")
+        title_area.markdown(f"### Edit event · {event.title}")
+        if close_area.button("Close", key=f"close_event_{event.id}"):
+            st.query_params.pop("event", None)
+            st.rerun()
+        if series:
+            st.caption(f"Repeats {series[1].lower()}. Only this occurrence will change.")
+        with st.form(f"edit_event_{event.id}"):
+            title = st.text_input("Event name", value=event.title)
+            event_categories = list_categories(DEFAULT_DB_PATH)
+            if event.kind not in event_categories:
+                event_categories = (*event_categories, event.kind)
+            kind = st.selectbox(
+                "Category",
+                [*event_categories, "+ New category"],
+                index=event_categories.index(event.kind),
+            )
+            new_kind = (
+                st.text_input("New category name", max_chars=40) if kind == "+ New category" else ""
+            )
+            day = st.date_input("Date", value=event.day, format="DD/MM/YYYY")
+            a, b = st.columns(2, gap="small")
+            event_choices = _event_time_choices(event.start, event.end)
+            with a:
+                start = st.selectbox(
+                    "From",
+                    event_choices[:-1],
+                    index=event_choices[:-1].index(
+                        f"{event.start // 60:02d}:{event.start % 60:02d}"
+                    ),
                 )
-                day = st.date_input("Date", value=event.day, format="DD/MM/YYYY")
-                a, b = st.columns(2, gap="small")
-                with a:
-                    start = st.selectbox("From", TIME_CHOICES[:-1], index=_time_index(event.start))
-                with b:
-                    end = st.selectbox("To", TIME_CHOICES, index=_time_index(event.end))
-                if st.form_submit_button("Update event", type="primary"):
-                    _save(
-                        lambda: update_fixed_event(
-                            DEFAULT_DB_PATH,
-                            event.id,
-                            title,
-                            day,
-                            _as_minute(start),
-                            _as_minute(end),
-                            kind,
-                        ),
-                        "Event updated. Review any changed suggestions.",
+            with b:
+                end = st.selectbox(
+                    "To",
+                    event_choices,
+                    index=event_choices.index(f"{event.end // 60:02d}:{event.end % 60:02d}"),
+                )
+            notes = st.text_area(
+                "Notes (optional)",
+                value=get_event_notes(DEFAULT_DB_PATH, event.id),
+                height=90,
+                max_chars=4000,
+            )
+            if st.form_submit_button("Save changes", type="primary"):
+
+                def save():
+                    update_fixed_event(
+                        DEFAULT_DB_PATH,
+                        event.id,
+                        title,
+                        day,
+                        _as_minute(start),
+                        _as_minute(end),
+                        create_category(DEFAULT_DB_PATH, new_kind)
+                        if kind == "+ New category"
+                        else kind,
+                        notes=notes,
                     )
-        if st.checkbox("Show delete option", key=f"event_delete_confirm_{event.id}"):
-            if st.button("Delete event", key=f"event_delete_{event.id}"):
+                    st.query_params.pop("event", None)
 
-                def delete():
-                    delete_fixed_event(DEFAULT_DB_PATH, event.id)
-                    st.query_params.clear()
+                _save(save, "Event saved")
+        if st.button("Cancel", key=f"cancel_event_{event.id}"):
+            st.query_params.pop("event", None)
+            st.rerun()
+        with st.expander("Delete event"):
+            if st.checkbox("I want to delete this event", key=f"confirm_delete_{event.id}"):
+                if st.button("Delete event", key=f"event_delete_{event.id}"):
 
-                _save(delete, "Event deleted.")
+                    def delete():
+                        delete_fixed_event(DEFAULT_DB_PATH, event.id)
+                        st.query_params.clear()
+
+                    _save(delete, "Event deleted")
+                if series and st.button(
+                    "Delete entire repeating series", key=f"delete_series_{event.id}"
+                ):
+
+                    def delete_series():
+                        delete_recurring_series(DEFAULT_DB_PATH, event.id)
+                        st.query_params.clear()
+
+                    _save(delete_series, "Repeating series deleted")
 
 
 def _selected_session(snapshot, selected_id: int, now: datetime) -> None:
@@ -331,72 +424,24 @@ def _risk_note(risk) -> str:
     )
 
 
-def _what_if(snapshot, now: datetime, normal) -> None:
-    """Read-only scenario: never present a simulation as an accept-able plan."""
-    _, sunday = week_bounds(now.date())
-    with st.popover("What if I lose study time?"):
-        st.caption("Quick estimate using the original keep-existing heuristic.")
-        day = st.date_input(
-            "Which day?",
-            value=now.date(),
-            min_value=now.date(),
-            max_value=sunday,
-            format="DD/MM/YYYY",
-            key="scenario_day",
-        )
-        ranges = {
-            "Morning (08:00–12:00)": (480, 720),
-            "Afternoon (12:00–18:00)": (720, 1080),
-            "Evening (18:00–22:00)": (1080, 1320),
-            "Whole day (08:00–22:00)": (480, 1320),
-        }
-        label = st.selectbox("Time unavailable", list(ranges), key="scenario_period")
-        try:
-            simulated = scenario_unavailable(snapshot, now, day, *ranges[label])
-            alternative = compare_plans(simulated, now).preserve
-        except ValueError as error:
-            st.info(str(error))
-            return
-        added_shortfall = alternative.due_shortfall_minutes - normal.due_shortfall_minutes
-        if added_shortfall > 0:
-            message = (
-                f"Losing this time could leave {_duration(added_shortfall)} more "
-                "work without a study slot before its deadline."
-            )
-            if added_shortfall >= 60:
-                st.error(message)
-            else:
-                st.info(message)
-        elif added_shortfall < 0:
-            st.info("The revised plan found time for more deadline work in this simulation.")
-        else:
-            st.info("No additional deadline problems found in this simulation.")
-        if alternative.risks:
-            with st.expander("Affected assignments"):
-                for risk in alternative.risks[:8]:
-                    st.write(_risk_note(risk))
-        st.caption("Preview only. Nothing in your calendar has changed.")
-
-
 def _review(snapshot, now: datetime) -> None:
     """Show intelligible alternatives and a read-only before/after calendar."""
     reschedule_id = st.session_state.get("reschedule_session_id")
     try:
-        comparison = compare_plans(snapshot, now, reschedule_session_id=reschedule_id)
+        compare_plans(snapshot, now, reschedule_session_id=reschedule_id)
     except ValueError:
         st.session_state.pop("reschedule_session_id", None)
         reschedule_id = None
-        comparison = compare_plans(snapshot, now)
+        compare_plans(snapshot, now)
 
-    stable = comparison.preserve
     if not any(
         s.kind == "timed" and not s.parent_completed and s.remaining_minutes for s in snapshot.steps
     ):
         return
 
     with st.container(border=True):
-        st.markdown("### Rescue my week · Choose your plan")
-        st.caption("See how your week could look. Only approval saves the changes.")
+        st.markdown("### Plan your week")
+        st.caption("Preview your plan before saving it.")
         local_dna = load_study_dna(DEFAULT_DB_PATH)
         required = required_task_ids(DEFAULT_DB_PATH, list_tasks(DEFAULT_DB_PATH))
         result, selected = choose_goal_preview(
@@ -404,11 +449,8 @@ def _review(snapshot, now: datetime) -> None:
         )
         if result is None:
             return
-        plan_label = {
-            "ab_steady": "Plan A · Steady pace",
-            "ab_focus": "Plan B · Focus days",
-        }.get(selected, GOALS.get(selected, "Your schedule"))
-        st.markdown(f"**Previewing: {plan_label}** · Not saved yet")
+        plan_label = GOALS.get(selected, "Your schedule")
+        st.caption(f"{plan_label} · Preview only, nothing saved yet")
         if st.session_state.get("calendar_adjusted_strategy") != selected:
             st.session_state.pop("calendar_adjusted_proposal", None)
         assessment = assess_proposal(snapshot, result.revision)
@@ -420,16 +462,38 @@ def _review(snapshot, now: datetime) -> None:
         )
         assessment = assess_proposal(snapshot, proposal)
         required_coverage = check_required_coverage(snapshot, proposal, now, required)
-        changed_count = proposal.removed_or_changed + proposal.added_or_changed
         metrics = schedule_metrics(snapshot, proposal, now)
-        a, b, c = st.columns(3, gap="small")
-        a.metric("Study time in this plan", _duration(proposal.planned_minutes))
-        b.metric("Due this week covered", f"{metrics['due_coverage_pct']:g}%")
-        c.metric("High priority covered", f"{metrics['high_priority_coverage_pct']:g}%")
+        a, b, c, d = st.columns(4, gap="small")
+        a.metric("Deadline work scheduled", f"{metrics['due_coverage_pct']:g}%")
+        b.metric("High-priority work scheduled", f"{metrics['high_priority_coverage_pct']:g}%")
+        c.metric("Days with study", len({slot.day for slot in proposal.slots}))
+        d.metric("Existing sessions changed", proposal.removed_or_changed)
         st.caption(
-            f"{proposal.removed_or_changed} existing blocks changed · "
-            f"{proposal.unchanged} kept. Percentages mean time allocated, not work completed."
+            f"{proposal.removed_or_changed} existing blocks change · "
+            f"{proposal.unchanged} stay as they are."
         )
+        steps = {step.id: step for step in snapshot.steps}
+        saved = tuple(
+            Slot(s.step_id, s.day, s.start, s.end)
+            for s in snapshot.sessions
+            if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
+        )
+        dates = changed_days(saved, proposal.slots)
+        if dates:
+            st.markdown("#### Before and after")
+            day = st.selectbox(
+                "Day to compare",
+                list(dates),
+                format_func=lambda d: d.strftime("%A, %d %B"),
+                key="rescue_comparison_day",
+            )
+            st.markdown(
+                before_after_html(day, snapshot.events, saved, proposal.slots, steps),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Your saved study sessions would stay where they are.")
+
         if not required_coverage.complete:
             st.warning(
                 f"{_duration(required_coverage.outstanding_minutes)} of deadline work "
@@ -470,89 +534,6 @@ def _review(snapshot, now: datetime) -> None:
                     "A different plan may help, but cannot guarantee every task will fit."
                 )
 
-        steps = {step.id: step for step in snapshot.steps}
-        saved = tuple(
-            Slot(s.step_id, s.day, s.start, s.end)
-            for s in snapshot.sessions
-            if s.status == "planned" and proposal.monday <= s.day <= proposal.sunday
-        )
-        with st.container():
-            st.markdown("#### Before and after")
-            dates = changed_days(saved, proposal.slots)
-            if dates:
-                day = st.selectbox(
-                    "Day to compare",
-                    list(dates),
-                    format_func=lambda d: d.strftime("%A, %d %B"),
-                    key="rescue_comparison_day",
-                )
-                st.markdown(
-                    before_after_html(day, snapshot.events, saved, proposal.slots, steps),
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    '<div class="pw-legend">'
-                    '<span><i style="background:#9889A9"></i>Previous time</span>'
-                    '<span><i style="background:#D6B8F1"></i>Suggested time</span>'
-                    '<span><i style="background:#625C6B"></i>Preserved</span>'
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                # Before/After is the primary explanation. A short summary
-                # remains optional so screen readers can access the changes.
-                groups = schedule_changes(saved, proposal.slots, steps)
-                if groups:
-                    with st.expander("Accessible change summary"):
-                        for name, _step_id, removed, added in groups[:10]:
-                            st.markdown(f"**{name}**")
-                            old_times = ", ".join(format_slot(s) for s in removed)
-                            new_times = ", ".join(format_slot(s) for s in added)
-                            st.caption(f"Previous: {old_times or 'None'}")
-                            st.caption(f"Suggested: {new_times or 'None'}")
-            elif changed_count == 0:
-                st.caption("Your saved study times would stay where they are.")
-
-        with st.expander("More options (optional)", expanded=False):
-            _what_if(snapshot, now, stable)
-            if proposal.slots:
-                with st.popover("Move a suggested study block"):
-                    pos = st.selectbox(
-                        "Study block",
-                        range(len(proposal.slots)),
-                        format_func=lambda i: (
-                            f"{study_label(steps.get(proposal.slots[i].step_id))} · "
-                            f"{proposal.slots[i].day:%a %d %b} "
-                            f"{format_time(proposal.slots[i].start)}"
-                        ),
-                    )
-                    with st.form("adjust_calendar_suggestion"):
-                        target = proposal.slots[pos]
-                        move_day = st.date_input(
-                            "New date",
-                            value=target.day,
-                            min_value=now.date(),
-                            max_value=proposal.sunday,
-                            format="DD/MM/YYYY",
-                        )
-                        time_choice = st.selectbox(
-                            "New start", TIME_CHOICES[:-1], index=_time_index(target.start)
-                        )
-                        if st.form_submit_button("Preview change"):
-                            try:
-                                moved = move_proposed_block(
-                                    snapshot,
-                                    proposal,
-                                    pos,
-                                    move_day,
-                                    _as_minute(time_choice),
-                                    datetime.now(),
-                                )
-                            except ValueError as error:
-                                st.error(str(error))
-                            else:
-                                st.session_state["calendar_adjusted_proposal"] = moved
-                                st.session_state["calendar_adjusted_strategy"] = selected
-                                st.rerun()
         accept_incomplete = False
         if not required_coverage.complete:
             accept_incomplete = st.checkbox(
@@ -562,7 +543,7 @@ def _review(snapshot, now: datetime) -> None:
             )
         accept, dismiss = st.columns(2, gap="small")
         if accept.button(
-            "Approve changes",
+            "Save this plan",
             type="primary",
             key="accept_rescue_plan",
             disabled=(
@@ -577,23 +558,19 @@ def _review(snapshot, now: datetime) -> None:
                 st.session_state.pop("goal_previews", None)
                 st.session_state.pop("calendar_adjusted_proposal", None)
                 st.session_state.pop("calendar_adjusted_strategy", None)
+                st.session_state.pop("calendar_review_open", None)
 
             _save(
                 save_accepted,
                 "Plan saved. Use Undo at the top of Calendar to restore the previous schedule.",
             )
-        if dismiss.button("Cancel preview", key="dismiss_rescue_plan"):
+        if dismiss.button("Cancel", key="dismiss_rescue_plan"):
             st.session_state.pop("goal_previews", None)
             st.session_state.pop("reschedule_session_id", None)
             st.session_state.pop("calendar_adjusted_proposal", None)
             st.session_state.pop("calendar_adjusted_strategy", None)
+            st.session_state.pop("calendar_review_open", None)
             st.rerun()
-        with st.expander("How scheduling works (optional)", expanded=False):
-            st.caption(
-                "The planner fits study blocks around fixed events and your study limits. "
-                "Plans are suggestions until you approve them; reserving time does not "
-                "mark a task done. Undo is available after approval."
-            )
 
 
 def _selected_item_id(key: str) -> int | None:
@@ -615,10 +592,7 @@ def main() -> None:
     header, undo_area = st.columns([4.5, 1.5], gap="medium", vertical_alignment="center")
     with header:
         st.markdown(
-            '<div class="pw-hero">'
-            "<h1>My Calendar</h1>"
-            "<p>Lectures, plans, and study time together. Review changes on your terms.</p>"
-            "</div>",
+            '<div class="pw-hero"><h1>My Calendar</h1></div>',
             unsafe_allow_html=True,
         )
     try:
@@ -630,7 +604,36 @@ def main() -> None:
         return
     message = st.session_state.pop("calendar_message", None)
     if message:
-        st.success(message)
+        st.toast(message)
+    outdated = outdated_planned_sessions(snapshot, now)
+    if outdated:
+        st.warning(
+            f"{len(outdated)} study booking(s) belong to completed or removed tasks. "
+            "These bookings cannot be moved into another plan."
+        )
+        labels = {step.id: step.task_title for step in snapshot.steps}
+        for session in outdated:
+            st.caption(
+                f"{session.day:%a %d %b} · "
+                f"{format_time(session.start)}–{format_time(session.end)} · "
+                f"{labels.get(session.step_id, 'Removed task')}"
+            )
+        if st.button("Remove outdated bookings", key="calendar_remove_outdated"):
+            _save(
+                lambda: remove_outdated_bookings(
+                    DEFAULT_DB_PATH,
+                    datetime.now(),
+                    snapshot.fingerprint,
+                    tuple(session.id for session in outdated),
+                ),
+                "Outdated study bookings removed. Undo is available below.",
+            )
+    if outdated_undo_available(DEFAULT_DB_PATH):
+        if st.button("Undo removed bookings", key="calendar_undo_outdated"):
+            _save(
+                lambda: undo_outdated_cleanup(DEFAULT_DB_PATH),
+                "Outdated study bookings restored.",
+            )
     undo_state = plan_undo_status(DEFAULT_DB_PATH)
     if undo_state == "ready":
         with undo_area:
@@ -663,87 +666,89 @@ def main() -> None:
     def jump_to_today() -> None:
         st.session_state["calendar_browse_date"] = now.date()
 
-    nav_left, nav_date, nav_right, nav_today = st.columns([1, 3, 1, 1.3])
-    with nav_left:
-        st.button(
-            "←",
-            key="calendar_previous",
-            help="Previous day or week",
-            on_click=shift_date,
-            args=(-increment,),
-        )
-    with nav_date:
-        date_to_view = st.date_input(
-            "Date",
-            value=anchor_date,
-            format="DD/MM/YYYY",
-            label_visibility="collapsed",
-            key="calendar_browse_date",
-        )
-    with nav_right:
-        st.button(
-            "→",
-            key="calendar_following",
-            help="Next day or week",
-            on_click=shift_date,
-            args=(increment,),
-        )
-    with nav_today:
-        st.button("Today", key="calendar_today", on_click=jump_to_today)
+    date_to_view = st.session_state.get("calendar_browse_date", anchor_date)
+    if view == "Day":
+        title = f"{date_to_view:%A, %d %B %Y}"
+    else:
+        start, finish = week_bounds(date_to_view)
+        title = f"{start:%d %b} – {finish:%d %b %Y}"
+    # One centered navigation axis, with "Today" serving as a real shortcut.
+    _, nav_middle, _ = st.columns([1, 3.0, 1])
+    with nav_middle:
+        _, today_button, _ = st.columns([2, 1.1, 2], gap="small")
+        with today_button:
+            st.button(
+                "Today",
+                key="calendar_jump_today",
+                on_click=jump_to_today,
+                type="tertiary",
+                width="stretch",
+            )
+        left, chooser, right = st.columns([1, 4, 1], vertical_alignment="center")
+        with left:
+            st.button(
+                "←",
+                key="calendar_previous",
+                help="Previous day or week",
+                on_click=shift_date,
+                args=(-increment,),
+                width="stretch",
+            )
+        with chooser:
+            with st.popover(title, use_container_width=True):
+                chosen = st.date_input(
+                    "Go to date",
+                    value=date_to_view,
+                    format="DD/MM/YYYY",
+                    key="calendar_go_to_date",
+                )
+                if st.button("Go to date", key="calendar_confirm_date"):
+                    st.session_state["calendar_browse_date"] = chosen
+                    st.rerun()
+        with right:
+            st.button(
+                "→",
+                key="calendar_following",
+                help="Next day or week",
+                on_click=shift_date,
+                args=(increment,),
+                width="stretch",
+            )
     selected_week_start, selected_week_end = week_bounds(date_to_view)
 
     # Related actions are visible individually, without a large nested expander.
     def start_plan():
-        st.session_state["start_week_plan"] = True
-        st.session_state["calendar_browse_date"] = now.date()
+        st.session_state["calendar_review_open"] = True
+        st.session_state["start_week_plan"] = False
+        st.session_state.pop("goal_previews", None)
+        st.session_state.pop("calendar_adjusted_proposal", None)
 
-    add_area, study_area, export_area, plan_area = st.columns([1.2, 1.4, 1.5, 1.6], gap="small")
-    with add_area:
-        _event_form(snapshot, date_to_view)
-    with study_area:
-        prefer_day = max(date_to_view, now.date())
-        _preferences(snapshot, prefer_day, week_bounds(prefer_day)[1])
-    with export_area:
-        with st.popover("Export calendar"):
-            st.caption(
-                "Import this file into Google Calendar or Apple Calendar. "
-                "This is a one-time download, not live sync."
+    _, actions, _ = st.columns([1, 3.0, 1])
+    with actions:
+        add_area, study_area, plan_area = st.columns(3, gap="small")
+        with add_area:
+            _event_form(snapshot, date_to_view)
+        with study_area:
+            prefer_day = max(date_to_view, now.date())
+            _preferences(snapshot, prefer_day, week_bounds(prefer_day)[1])
+        with plan_area:
+            st.button(
+                "Plan my week",
+                key="calendar_plan_week",
+                type="primary",
+                on_click=start_plan,
             )
-            st.download_button(
-                "Download week (.ics)",
-                data=build_calendar_ics(
-                    snapshot, start_day=selected_week_start, end_day=selected_week_end
-                ),
-                file_name=f"personal-workspace-{selected_week_start.isoformat()}.ics",
-                mime="text/calendar",
-                key="download_week_ics",
-            )
-    with plan_area:
-        st.button(
-            "Plan my week",
-            key="calendar_plan_week",
-            type="primary",
-            on_click=start_plan,
-        )
-    if not snapshot.budgets and not snapshot.windows:
-        st.caption("Set a preferred study budget once to receive scheduling suggestions.")
     selected_session = _selected_item_id("session")
     selected_event = _selected_item_id("event")
     if selected_session:
         _selected_session(snapshot, selected_session, now)
     elif selected_event:
         _selected_event(snapshot, selected_event)
-    # Keep urgent schedule repairs above the calendar so they are not buried
-    # beneath a full-height timetable. Normal weeks remain calendar-first.
-    render_calendar_import(snapshot, DEFAULT_DB_PATH)
     if selected_week_start == monday:
-        render_schedule_lab(snapshot, now, DEFAULT_DB_PATH)
-        render_energy_today(snapshot, now, DEFAULT_DB_PATH)
-        render_time_protection(snapshot, now, DEFAULT_DB_PATH)
-        with st.expander(
-            "Review a new plan",
-            expanded=bool(issues) or bool(st.session_state.get("start_week_plan")),
-        ):
+        render_plan_doctor(snapshot, now)
+        if st.session_state.get("start_week_plan"):
+            st.session_state["calendar_review_open"] = True
+        if st.session_state.get("calendar_review_open"):
             _review(snapshot, now)
     if view == "Week":
         start_day, end_day = selected_week_start, selected_week_end
@@ -777,10 +782,13 @@ def main() -> None:
                 end_day,
                 today=now.date(),
                 session_links=links,
+                category_colors=category_colors(DEFAULT_DB_PATH),
             ),
             unsafe_allow_html=True,
         )
-        st.caption("Select a colored block to view or edit its details.")
+    if selected_week_start == monday:
+        render_energy_today(snapshot, now, DEFAULT_DB_PATH)
+        render_time_protection(snapshot, now, DEFAULT_DB_PATH)
     if selected_week_start != monday:
         st.caption("Automatic schedule suggestions currently cover today through Sunday.")
     with st.expander("Agenda by day", expanded=False):
@@ -788,7 +796,10 @@ def main() -> None:
         if not agenda:
             st.caption("Nothing scheduled in this week.")
         for day in sorted({row[0] for row in agenda}):
-            st.markdown(f"**{day:%A, %d %B}**")
+            st.markdown(
+                f'<div class="pw-agenda-day-heading">{day:%A, %d %B}</div>',
+                unsafe_allow_html=True,
+            )
             day_rows = [row for row in agenda if row[0] == day]
             for group, types in (
                 ("Study", {"Study"}),
@@ -802,9 +813,41 @@ def main() -> None:
                 if rows:
                     st.caption(group)
                     for _, start, end, kind, title in rows:
+                        from html import escape
+
+                        palette = category_colors(DEFAULT_DB_PATH)
+                        color = palette.get(kind, "#B5B3C9")
                         st.markdown(
-                            f"{format_time(start)}–{format_time(end)} · **{title}** · {kind}"
+                            f'<div class="pw-agenda-row" style="--category-color:{color}">'
+                            f'<div class="pw-agenda-title">{escape(title)}</div>'
+                            f'<div class="pw-agenda-time">{format_time(start)}–'
+                            f"{format_time(end)} · {escape(kind)}</div></div>",
+                            unsafe_allow_html=True,
                         )
+
+    st.markdown("### Calendar tools")
+    with st.expander("Export calendar", expanded=False, icon=":material/download:"):
+        calendar_file = build_calendar_ics(
+            snapshot,
+            start_day=selected_week_start,
+            end_day=selected_week_end,
+        )
+        st.download_button(
+            "Download this week (.ics)",
+            data=calendar_file,
+            file_name=f"personal-workspace-{selected_week_start.isoformat()}.ics",
+            mime="text/calendar",
+            key="download_week_ics",
+        )
+        st.caption("Browser downloads go wherever your browser saves files.")
+        if st.button("Save a copy to Downloads", key="save_week_ics_locally"):
+            try:
+                saved_path = save_calendar_to_downloads(calendar_file, selected_week_start)
+            except OSError as error:
+                st.error(f"Could not save the calendar file: {error}")
+            else:
+                st.success(f"Saved to: {saved_path}")
+    render_calendar_import(snapshot, DEFAULT_DB_PATH)
 
 
 if __name__ == "__main__":
