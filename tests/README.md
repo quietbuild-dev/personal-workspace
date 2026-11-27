@@ -1,17 +1,20 @@
-# MVP automated tests
+# Automated tests
 
-Run `python -m pytest` from the project root with your project's Python 3.12
-virtual environment. Existing core task tests are in `test_tasks.py` and
-`test_task_editing.py`. The added `test_planner.py`, `test_metrics.py`,
-`test_availability_and_integration.py`, `test_demo_script.py` and
-`test_view_logic_smoke.py` cover the new feature boundaries and simulated UI
-forms. The six view-logic tests use a Streamlit stand-in, not the actual library.
+We use **pytest** for automated tests and **Ruff** for code quality checks. The tests cover task management and progress, database changes, scheduling constraints, planning proposals, Undo, and selected UI behavior.
 
-The planner tests use fixed dates and a reproducible randomized suite of 200
-scenarios. Database tests use temporary SQLite files; they never open the
-personal database. The migration test creates an old-schema SQLite DB and
-verifies the new availability table can be added without losing tasks.
+Tests that need SQLite create temporary databases rather than modifying personal workspace data. Some Streamlit interactions are simulated; the real interface still needs a manual check.
 
-**Do not confuse** successful unit/integration tests with browser verification:
-run `python -m scripts.check_ui` (with Streamlit installed) and the checklist
-in `docs/DEMO_WALKTHROUGH.md` before release.
+## Run the checks (Windows PowerShell)
+
+From the project root with Python 3.12 and development dependencies installed:
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+
+$testDir = Join-Path $env:TEMP ("pw-tests-" + [guid]::NewGuid().ToString("N"))
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp "$testDir"
+
+.\.venv\Scripts\python.exe -m scripts.check_optimizer_ui
+```
+
+We also ran synthetic evaluations comparing **CP-SAT** with the **greedy baseline**. See the [optimizer evaluation](../docs/OPTIMIZER_EVALUATION.md) for the scenarios, results, and limitations. The [demo checklist](../docs/DEMO_WALKTHROUGH.md) covers what to verify in the running app.

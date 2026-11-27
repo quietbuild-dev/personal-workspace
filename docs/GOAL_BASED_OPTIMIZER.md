@@ -1,9 +1,8 @@
 # Goal-based weekly scheduling
 
-Implemented on `feat/goal-based-optimizer`, in the isolated worktree. The optimizer
-is a pure function. It returns the same `RevisionProposal` type as the original
-greedy planner and has no database connection. The calendar still requires an
-explicit approval, with validation inside the existing SQLite transaction.
+The CP-SAT optimizer builds a proposed timetable without writing to the database.
+It returns the same `RevisionProposal` type as the greedy baseline. Saving a plan
+still requires explicit approval and another validation inside the SQLite transaction.
 
 ## Scope and constraints
 
@@ -156,11 +155,12 @@ the same transaction as the fingerprint check. Undo also rejects a previously sa
 plan that became invalid after dependencies were introduced.
 
 Actual prerequisite readiness means an explicitly completed parent, or represented
-timed steps with zero remaining minutes and every checklist item checked. A pending
-task with only checklists needs explicit completion. Reserving time changes none of
-these facts. Recording a dependent session as done requires actual prerequisite
-readiness; partially completing a prerequisite leaves that gate closed. Manual task
-and progress edits remain explicit user statements about work, not scheduler writes.
+timed steps with zero remaining minutes and every checklist item checked. Checking
+the last subtask in the Home/Tasks interface can now complete an eligible parent
+automatically; unfinished timed work still blocks completion. Other checklist
+interfaces may only update the step state. Reserving time changes none of these
+facts. Recording a dependent session as done requires actual prerequisite
+readiness; partially completing a prerequisite leaves that gate closed.
 
 The greedy baseline now schedules in topological order. For tasks without
 dependencies its date-first ordering remains intact. Both engines and approval
@@ -178,7 +178,7 @@ Suggested extra minutes are calculated from unused in-window capacity limited by
 the daily budget, or free out-of-window time within 08:00–22:00 and the remaining
 budget. The wording says “may help”, not that changing a setting guarantees a plan.
 
-The new goal selector replaces the two strategy buttons: routine corresponds to
+The goal selector offers five optimization objectives: routine corresponds to
 minimal change and throughput corresponds to finding more time. The old strategies
 remain callable baselines; the quick lost-time simulation is explicitly labelled
 as the original heuristic. Before/After, manual preview adjustments and explicit
@@ -192,23 +192,14 @@ metrics are recalculated. Alternative-goal table rows describe the generated pla
 `advanced_repository.py` owns additive storage and transactions; `planning_insights.py`
 provides shared metrics; `conflict_analysis.py` calculates bounds. The calendar uses
 `views/goal_preview.py`; task details in `views/home.py` provide dependency editing.
-The theme, navigation and Windows desktop launcher were not redesigned.
+This model is separate from the UI and desktop launcher.
 
 See [OPTIMIZER_EVALUATION.md](OPTIMIZER_EVALUATION.md) for measurements and checks.
 The solver status semantics follow the [official CP-SAT documentation](https://developers.google.com/optimization/cp/cp_solver).
 
-From this worktree, review with synthetic data (the generator refuses to overwrite):
+To try the planner, use a [sample database](PLAYGROUND_DESKTOP_DEMO.md), open Calendar,
+choose a planning goal, generate a preview, and compare alternatives. Only approve
+if you want the proposal saved; then test guarded Undo.
 
-```powershell
-.\.venv\Scripts\python.exe -m scripts.create_optimizer_demo --output data/optimizer-demo.db
-$env:WORKSPACE_DB_PATH = Join-Path $PWD 'data/optimizer-demo.db'
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
-
-Open Calendar → Rescue my week, choose a goal, generate and compare. Approve only
-to save the selected preview; test Undo afterward. In Tasks → Details → Prerequisites,
-edit the research/write relation. Clear the environment override when finished:
-`Remove-Item Env:WORKSPACE_DB_PATH`. No personal database is needed for this review.
-
-No automated test is a manual Windows desktop/pixel review. Browser rendering and
-desktop launcher interactions still need a human check before submission.
+Automated constraint checks are not a substitute for reviewing the interface in
+a real browser or the Windows desktop window.
