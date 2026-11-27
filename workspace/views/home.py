@@ -17,7 +17,12 @@ from workspace.advanced_repository import (
 )
 from workspace.categories import category_colors, create_category
 from workspace.deadline_guarantees import check_required_coverage
-from workspace.home_view_logic import completed_today, due_display, focus_tasks
+from workspace.home_view_logic import (
+    completed_today,
+    due_display,
+    focus_tasks,
+    simple_todo_tasks,
+)
 from workspace.manual_planning import move_proposed_block
 from workspace.models import TaskDraft
 from workspace.overview import load_overview
@@ -128,6 +133,37 @@ def _save_progress_preference_and_close(task_id: int, mode: str, percent: int) -
         st.session_state.pop(key, None)
 
 
+def _save_time_progress(task, completed_minutes: int) -> None:
+    """Save elapsed minutes as remaining effort, without switching tracking modes.
+
+    This uses the existing task/study-step transaction so that the planner and
+    the visible time-based percentage agree. Completing all estimated minutes
+    completes the task, subject to the normal unfinished-step safeguards.
+    """
+    if not 0 <= completed_minutes <= task.estimate_minutes:
+        raise ValueError("Completed minutes must fit within the task's total time.")
+    edit_quick_task(
+        DEFAULT_DB_PATH,
+        task.id,
+        TaskDraft(
+            task.title,
+            task.category,
+            task.deadline,
+            task.priority,
+            task.estimate_minutes,
+        ),
+        task.estimate_minutes - completed_minutes,
+    )
+    for key in (
+        "partial_task_id",
+        "open_task_details",
+        "home_quick_progress",
+        "home_details_origin",
+        "task_more_details_id",
+    ):
+        st.session_state.pop(key, None)
+
+
 def _duration_input(key: str, *, minutes: int = 60) -> int:
     a, b = st.columns(2, gap="small")
     with a:
@@ -158,12 +194,17 @@ def _new_task(categories: tuple[str, ...]) -> None:
         category = _category_input(categories, f"new_{rev}")
         tracking = st.radio(
             "Track progress with",
-            ["Progress bar", "Subtasks", "Simple to-do"],
+            ["Progress bar", "Subtasks", "Time tracked"],
             horizontal=True,
             index=0,
+            disabled=bool(st.session_state.get(f"new_simple_{rev}", False)),
             key=f"new_style_{rev}",
         )
-        is_todo = tracking == "Simple to-do"
+        is_todo = st.checkbox(
+            "Simple to-do — just mark Done",
+            value=False,
+            key=f"new_simple_{rev}",
+        )
         with st.form(f"new_task_{rev}"):
             title = st.text_input("Task name", placeholder="e.g. Finish economics assignment")
             due = st.date_input(
@@ -177,11 +218,16 @@ def _new_task(categories: tuple[str, ...]) -> None:
                 if is_todo:
                     estimate = 15  # Internal placeholder; never shown as task progress.
                 else:
-                    st.caption("Estimated time")
+                    st.caption(
+                        "Total time (e.g. video length)"
+                        if tracking == "Time tracked"
+                        else "Estimated time"
+                    )
                     estimate = _duration_input(f"new_{rev}")
             with right:
                 priority = st.selectbox("Priority", list(PRIORITIES), index=1)
-            if tracking == "Subtasks":
+            subtasks = ""
+            if tracking == "Subtasks" and not is_todo:
                 subtasks = st.text_area(
                     "Subtasks (one per line)",
                     placeholder="Find sources\nWrite first draft\nCheck references",
@@ -214,7 +260,7 @@ def _new_task(categories: tuple[str, ...]) -> None:
                         help="Leave checked for exams or submissions. Uncheck for optional work.",
                     )
                 )
-                if tracking != "Subtasks":
+                if tracking != "Subtasks" and not is_todo:
                     subtasks = st.text_area(
                         "Subtasks (optional)",
                         placeholder="e.g. Find sources\nWrite first draft\nCheck references",
@@ -241,7 +287,11 @@ def _new_task(categories: tuple[str, ...]) -> None:
                     save_progress_preference(
                         DEFAULT_DB_PATH,
                         new_id,
-                        "checklist" if tracking == "Subtasks" else "manual",
+                        {
+                            "Progress bar": "manual",
+                            "Subtasks": "checklist",
+                            "Time tracked": "time",
+                        }[tracking],
                         0,
                     )
                 for line in lines:
@@ -451,11 +501,7 @@ def _weekly_workload(overview, today: date) -> str:
 
 
 def _task_checklist(overview, task, *, key_prefix: str, interactive: bool = True) -> bool:
-    """Show stored subtasks at the task, rather than hiding them behind More details.
-
-    Updating a checkbox changes only that checklist step. It never marks the
-    parent task complete or changes its remaining study minutes.
-    """
+    """Render saved checklist steps and auto-finish when all are checked."""
     steps = getattr(getattr(overview, "advanced", None), "steps", ())
     items = [step for step in steps if step.task_id == task.id and step.kind == "checklist"]
     if not items:
@@ -471,14 +517,34 @@ def _task_checklist(overview, task, *, key_prefix: str, interactive: bool = True
             )
             if checked != bool(item.checked):
                 _apply(
-                    lambda step_id=item.id, value=checked: set_checklist_done(
-                        DEFAULT_DB_PATH, step_id, value
+                    lambda current=item, value=checked: _save_checklist_item(
+                        task, current, items, value
                     ),
                     "Subtask updated.",
                 )
         else:
             st.markdown(f"{'✓' if item.checked else '○'} {escape(item.title)}")
     return True
+
+
+def _save_checklist_item(task, item, checklist, checked: bool) -> None:
+    """Check one subtask and complete the parent if no required work remains.
+
+    Existing task-completion checks still protect unfinished timed work.
+    """
+    set_checklist_done(DEFAULT_DB_PATH, item.id, checked)
+    if not checked or task.status != "pending":
+        return
+    if any(not step.checked and step.id != item.id for step in checklist):
+        return
+    # A completed checklist finishes the parent regardless of display mode.
+    # Existing task-completion validation still blocks unfinished timed steps.
+    try:
+        _remember_task_done(task)
+    except ValueError:
+        # A separate, unfinished timed step may still be required. The newly
+        # checked checkbox remains saved; never bypass completion safeguards.
+        pass
 
 
 def _remember_task_done(task) -> None:
@@ -544,8 +610,11 @@ def _home_task_actions(task, overview, *, key_prefix="home") -> None:
     user_mode = load_task_modes(DEFAULT_DB_PATH).get(task.id)
     user_pref = load_progress_preferences(DEFAULT_DB_PATH).get(task.id)
     shown_mode = tracking_choice(task, user_mode, user_pref, items)
-    if progress.button(
-        "Subtasks" if shown_mode == "Subtasks" else "Progress",
+    if shown_mode != "Simple to-do" and progress.button(
+        {
+            "Subtasks": "Subtasks",
+            "Time tracked": "Log time",
+        }.get(shown_mode, "Progress"),
         key=f"{key_prefix}_progress_{task.id}",
         width="stretch",
     ):
@@ -618,34 +687,47 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
                     unsafe_allow_html=True,
                 )
     with right:
-        with st.container(border=True):
+        with st.container(border=True, key="home_todo_list"):
             st.markdown("### To-do")
-            no_deadline = sorted(
-                (
-                    task
-                    for task in overview.tasks
-                    if task.status == "pending" and task.deadline is None
-                ),
-                key=lambda task: (-task.priority, task.id),
+            st.markdown(
+                """<style>
+                .st-key-home_todo_list [data-testid="stCheckbox"] label {
+                    display: flex !important;
+                    align-items: center !important;
+                    gap: 0.65rem !important;
+                    padding: 0.15rem 0 !important;
+                }
+                .st-key-home_todo_list [data-testid="stCheckbox"] label p {
+                    font-family: inherit !important;
+                    font-size: 1.125rem !important;
+                    font-weight: 400 !important;
+                    line-height: 1.45 !important;
+                    letter-spacing: normal !important;
+                    margin: 0 !important;
+                }
+                </style>""",
+                unsafe_allow_html=True,
             )
-            if not no_deadline:
-                st.caption("No open to-dos without deadlines.")
+            # Show only Simple to-dos, not every assignment without a deadline.
+            # Include today's completed to-dos so a mistaken tick is reversible.
+            todos = simple_todo_tasks(overview, today, load_task_modes(DEFAULT_DB_PATH))
+            todos = [task for task in todos if task.status == "pending"]
+            if not todos:
+                st.caption("No to-dos to show.")
             show_all_todos = st.session_state.get("home_all_todos", False)
-            for task in no_deadline if show_all_todos else no_deadline[:5]:
-                st.markdown(
-                    f'<div class="pw-home-task-name">{escape(task.title)}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f'<div class="pw-home-task-meta">{escape(task.category)}</div>',
-                    unsafe_allow_html=True,
-                )
-                _home_task_actions(task, overview)
-            if len(no_deadline) > 5:
+            for task in todos if show_all_todos else todos[:5]:
+                # One native checkbox keeps its text and square aligned naturally.
+                # Completed items are omitted here; Undo remains in Completed today.
+                if st.checkbox(
+                    task.title,
+                    value=False,
+                    key=f"home_todo_check_{task.id}",
+                    help="Mark Done",
+                ):
+                    _apply(lambda t=task: _remember_task_done(t), "To-do done.")
+            if len(todos) > 5:
                 label = (
-                    "Show fewer to-dos"
-                    if show_all_todos
-                    else f"Show {len(no_deadline) - 5} more to-dos"
+                    "Show fewer to-dos" if show_all_todos else f"Show {len(todos) - 5} more to-dos"
                 )
                 if st.button(label, key="home_toggle_todos"):
                     st.session_state["home_all_todos"] = not show_all_todos
@@ -671,9 +753,14 @@ def _home_priorities(overview, deadline_times: dict[int, int], today: date) -> N
                     recent = st.session_state.get("just_completed_task")
                     immediate = bool(recent and recent[0] == task.id)
                     if st.button(
-                        "↶ Undo" if immediate else "↶ Reopen",
+                        "↶ Undo",
                         key=f"home_undo_completed_{task.id}",
-                        help="Reopen this task if you marked it done by mistake.",
+                        type="tertiary",
+                        help=(
+                            "Undo completion and restore your previous remaining time."
+                            if immediate
+                            else "Reopen this task. Its remaining time resets to the estimate."
+                        ),
                     ):
                         _apply(lambda t=task: _reopen_task(t), "Task reopened.")
             if len(done_today) > 3:
@@ -703,8 +790,17 @@ def _task_rows(
         task_id, title, _previous_remaining = just_done
         current = next((t for t in overview.tasks if t.id == task_id), None)
         if current is not None and current.status == "completed":
-            st.caption(f"{title} completed. You can undo this below.")
-            if st.button("Undo completion", key="undo_task_completion"):
+            notice, undo = st.columns([6, 1], vertical_alignment="center")
+            with notice:
+                st.caption(f"{title} marked Done.")
+            with undo:
+                pressed = st.button(
+                    "↶ Undo",
+                    key="undo_task_completion",
+                    type="tertiary",
+                    help="Restore the task if it was completed by mistake.",
+                )
+            if pressed:
 
                 def restore():
                     _reopen_task(current)
@@ -779,17 +875,19 @@ def _task_rows(
                     _task_checklist(overview, task, key_prefix="tasks")
             with action:
                 recent = st.session_state.get("just_completed_task")
-                button_label = (
-                    "Done"
-                    if task.status == "pending"
-                    else "↶ Undo"
-                    if recent and recent[0] == task.id
-                    else "↶ Reopen"
-                )
+                button_label = "Done" if task.status == "pending" else "↶ Undo"
                 if st.button(
                     button_label,
                     key=f"done_{task.id}",
-                    width="stretch",
+                    width="stretch" if task.status == "pending" else "content",
+                    type="secondary" if task.status == "pending" else "tertiary",
+                    help=(
+                        "Restore the previous remaining time."
+                        if recent and recent[0] == task.id
+                        else "Reopen; remaining time resets to the estimate."
+                    )
+                    if task.status == "completed"
+                    else None,
                     disabled=task.status == "pending"
                     and any(not item.checked for item in checklist_for_task),
                 ):
@@ -803,7 +901,7 @@ def _task_rows(
                     and not simple
                     and chosen_tracking != "Subtasks"
                     and st.button(
-                        "Progress",
+                        "Log time" if chosen_tracking == "Time tracked" else "Progress",
                         key=f"partial_{task.id}",
                         width="stretch",
                     )
@@ -839,13 +937,33 @@ def _task_rows(
                             ),
                             key=f"progress_percent_{task.id}",
                         )
-                    if st.form_submit_button("Save progress preference"):
-                        _apply(
-                            lambda: _save_progress_preference_and_close(
-                                task.id, mode, int(percent)
-                            ),
-                            "Progress display updated.",
+                    elif mode == "time":
+                        minutes_done = st.number_input(
+                            "Minutes completed",
+                            min_value=0,
+                            max_value=task.estimate_minutes,
+                            value=task.estimate_minutes - task.remaining_minutes,
+                            step=1,
+                            key=f"time_done_{task.id}",
+                            help="For a video, enter how many minutes you have watched.",
                         )
+                        st.caption(
+                            "Recording the full duration completes the task "
+                            "(provided its subtasks are also finished)."
+                        )
+                    if st.form_submit_button("Save progress"):
+                        if mode == "time":
+                            _apply(
+                                lambda: _save_time_progress(task, int(minutes_done)),
+                                "Time progress saved.",
+                            )
+                        else:
+                            _apply(
+                                lambda: _save_progress_preference_and_close(
+                                    task.id, mode, int(percent)
+                                ),
+                                "Progress display updated.",
+                            )
                 checklist = [
                     step
                     for step in overview.advanced.steps
@@ -861,10 +979,8 @@ def _task_rows(
                         )
                         if checked != item.checked:
                             _apply(
-                                lambda item_id=item.id, value=checked: set_checklist_done(
-                                    DEFAULT_DB_PATH,
-                                    item_id,
-                                    value,
+                                lambda current=item, value=checked: _save_checklist_item(
+                                    task, current, checklist, value
                                 ),
                                 "Checklist updated.",
                             )
@@ -917,8 +1033,7 @@ def _edit_task(overview, categories, deadline_times) -> None:
         return
     steps = [item for item in overview.advanced.steps if item.task_id == task_id]
     with st.container(border=True):
-        heading, close = st.columns([5, 1], vertical_alignment="center")
-        heading.markdown(f"#### {task.title}")
+        close = st.columns([5, 1], vertical_alignment="center")[1]
         if close.button("Close", key=f"close_task_summary_{task.id}"):
             st.session_state.pop("open_task_details", None)
             st.session_state.pop("task_board_selected_task", None)
@@ -937,7 +1052,7 @@ def _edit_task(overview, categories, deadline_times) -> None:
         if task.status == "completed":
             st.caption("Completed")
             _task_checklist(overview, task, key_prefix="summary", interactive=False)
-            if st.button("↶ Undo completion", key=f"summary_undo_{task.id}"):
+            if st.button("↶ Undo", key=f"summary_undo_{task.id}", type="tertiary"):
                 _apply(lambda: _reopen_task(task), "Task reopened.")
         else:
             pref = load_progress_preferences(DEFAULT_DB_PATH).get(task.id, ProgressPreference())
@@ -955,35 +1070,46 @@ def _edit_task(overview, categories, deadline_times) -> None:
                 )
             if selected == "Subtasks":
                 _task_checklist(overview, task, key_prefix="summary")
-            if (
-                selected == "Progress bar"
-                and st.session_state.get("home_quick_progress") == task.id
-            ):
+            if selected in ("Progress bar", "Time tracked"):
                 with st.form(f"task_quick_progress_{task.id}"):
-                    value = st.slider(
-                        "Progress",
-                        0,
-                        100,
-                        pref.manual_percent if pref.mode == "manual" else 0,
-                        step=5,
-                    )
-                    if st.form_submit_button("Save progress", type="primary"):
-                        _apply(
-                            lambda: _save_progress_preference_and_close(task.id, "manual", value),
-                            "Progress saved.",
+                    if selected == "Time tracked":
+                        minutes_done = st.number_input(
+                            "Minutes completed",
+                            min_value=0,
+                            max_value=task.estimate_minutes,
+                            value=task.estimate_minutes - task.remaining_minutes,
+                            step=1,
+                            key=f"home_time_done_{task.id}",
+                            help="For a video, enter how many minutes you have watched.",
                         )
-            primary, secondary = st.columns([1.2, 1.6], gap="small")
+                    else:
+                        value = st.slider(
+                            "Progress",
+                            0,
+                            100,
+                            pref.manual_percent if pref.mode == "manual" else 0,
+                            step=5,
+                        )
+                    if st.form_submit_button("Save progress", type="primary"):
+                        if selected == "Time tracked":
+                            _apply(
+                                lambda: _save_time_progress(task, int(minutes_done)),
+                                "Time progress saved.",
+                            )
+                        else:
+                            _apply(
+                                lambda: _save_progress_preference_and_close(
+                                    task.id, "manual", value
+                                ),
+                                "Progress saved.",
+                            )
+            primary = st
             if primary.button(
                 "Mark done",
                 key=f"summary_done_{task.id}",
                 disabled=bool(checklist) and not all(item.checked for item in checklist),
             ):
                 _apply(lambda: _remember_task_done(task), "Task done")
-            if selected == "Progress bar" and secondary.button(
-                "Update progress", key=f"summary_progress_{task.id}"
-            ):
-                st.session_state["home_quick_progress"] = task.id
-                st.rerun()
         expanded = st.session_state.get("task_more_details_id") == task.id
         if st.button(
             "Hide extra details" if expanded else "More details",
@@ -1007,7 +1133,6 @@ def _edit_task_full(overview, categories, deadline_times) -> None:
     timed_remaining = [step.remaining_minutes for step in steps if step.kind == "timed"]
     checklist = [step for step in steps if step.kind == "checklist"]
     with st.container(border=True):
-        st.subheader(task.title)
         task_modes = load_task_modes(DEFAULT_DB_PATH)
         preference = load_progress_preferences(DEFAULT_DB_PATH).get(task.id)
         current_mode = tracking_choice(
@@ -1017,14 +1142,21 @@ def _edit_task_full(overview, categories, deadline_times) -> None:
             checklist,
         )
         with st.expander("Progress tracking", expanded=False):
-            modes = ["Simple to-do", "Progress bar", "Subtasks"]
-            display_mode = st.radio(
+            modes = ["Progress bar", "Subtasks", "Time tracked"]
+            mode_choice = st.radio(
                 "Track progress with",
                 modes,
-                index=modes.index(current_mode),
+                index=modes.index(current_mode) if current_mode in modes else 0,
                 horizontal=True,
+                disabled=bool(st.session_state.get(f"task_simple_{task.id}", False)),
                 key=f"task_display_{task.id}",
             )
+            simple_now = st.checkbox(
+                "Simple to-do — just mark Done",
+                value=current_mode == "Simple to-do",
+                key=f"task_simple_{task.id}",
+            )
+            display_mode = "Simple to-do" if simple_now else mode_choice
             if st.button("Save tracking method", key=f"save_task_display_{task.id}"):
 
                 def save_tracking():
@@ -1037,7 +1169,11 @@ def _edit_task_full(overview, categories, deadline_times) -> None:
                         save_progress_preference(
                             DEFAULT_DB_PATH,
                             task.id,
-                            "checklist" if display_mode == "Subtasks" else "manual",
+                            {
+                                "Progress bar": "manual",
+                                "Subtasks": "checklist",
+                                "Time tracked": "time",
+                            }[display_mode],
                             preference.manual_percent if preference is not None else 0,
                         )
                     st.session_state.pop("open_task_details", None)
@@ -1318,6 +1454,8 @@ def main() -> None:
         now,
         task_actions=lambda task: _home_task_actions(task, overview, key_prefix="home_due"),
         progress_preferences=load_progress_preferences(DEFAULT_DB_PATH),
+        task_modes=load_task_modes(DEFAULT_DB_PATH),
+        priority_labels=PRIORITIES,
     )
     # Deadline, Focus and To-do actions each render their own panel inline.
     render_weekly_replay(overview.advanced, now, DEFAULT_DB_PATH)

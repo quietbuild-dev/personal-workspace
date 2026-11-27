@@ -6,10 +6,8 @@ from html import escape
 import streamlit as st
 
 from workspace.home_intelligence import daily_briefing, deadline_runway, display_duration
-from workspace.task_progress import (
-    ProgressPreference,
-    progress_details,
-)
+from workspace.task_modes import is_simple_task
+from workspace.task_progress import ProgressPreference, progress_details
 
 
 def render_daily_briefing(overview, now: datetime) -> None:
@@ -34,7 +32,16 @@ def render_daily_briefing(overview, now: datetime) -> None:
             st.switch_page("workspace/views/week.py")
 
 
-def _runway_row(item, task, task_actions=None, checklist=(), preference=None) -> None:
+def _runway_row(
+    item,
+    task,
+    task_actions=None,
+    checklist=(),
+    preference=None,
+    *,
+    timed=(),
+    simple=False,
+) -> None:
     due = (
         "Today"
         if item.days_left == 0
@@ -42,20 +49,30 @@ def _runway_row(item, task, task_actions=None, checklist=(), preference=None) ->
         if item.days_left == 1
         else f"{item.deadline:%d %b}"
     )
-    label = f"{due} · {display_duration(item.remaining_minutes)} left"
+    label = due if simple else f"{due} · {display_duration(item.remaining_minutes)} left"
     ratio = max(0, min(100, item.done_percent))
-    if task is not None:
-        ratio, _ = progress_details(task, checklist, preference=preference)
+    if task is not None and hasattr(task, "status"):
+        ratio, _ = progress_details(
+            task,
+            checklist,
+            timed_steps=timed,
+            preference=preference,
+        )
+    progress_markup = (
+        ""
+        if simple
+        else '<div class="pw-home-due-progress">'
+        f"<span>{ratio}% complete</span>"
+        '<div class="pw-home-due-track">'
+        f'<i style="width:{ratio}%"></i></div></div>'
+    )
     st.markdown(
         '<div class="pw-home-due-row">'
         '<div class="pw-home-due-line">'
         f"<strong>{escape(item.title)}</strong>"
         f"<span>{escape(label)}</span>"
         "</div>"
-        '<div class="pw-home-due-progress">'
-        f"<span>{ratio}% complete</span>"
-        '<div class="pw-home-due-track">'
-        f'<i style="width:{ratio}%"></i></div></div></div>',
+        f"{progress_markup}</div>",
         unsafe_allow_html=True,
     )
     if task_actions is not None and task is not None:
@@ -74,6 +91,8 @@ def render_deadline_runway(
     *,
     task_actions=None,
     progress_preferences=None,
+    task_modes=None,
+    priority_labels=None,
 ) -> None:
     with st.container(border=True, key="home_due_next"):
         st.markdown("#### What's due next")
@@ -100,20 +119,46 @@ def render_deadline_runway(
             return
         tasks_by_id = {task.id: task for task in overview.tasks}
         steps_by_task = {}
+        timed_by_task = {}
         if getattr(overview, "advanced", None) is not None:
             for step in overview.advanced.steps:
                 if step.kind == "checklist":
                     steps_by_task.setdefault(step.task_id, []).append(step)
+                elif step.kind == "timed":
+                    timed_by_task.setdefault(step.task_id, []).append(step)
         prefs = progress_preferences or {}
         expanded = st.session_state.get("home_all_deadlines", False)
         visible = items if expanded else items[:3]
         for item in visible:
+            priority_task = tasks_by_id.get(item.task_id)
+            if priority_labels and priority_task is not None:
+                priority_name = next(
+                    (name for name, rank in priority_labels.items()
+                     if rank == priority_task.priority),
+                    str(priority_task.priority),
+                )
+                st.caption(f"{priority_name} priority")
             _runway_row(
                 item,
                 tasks_by_id.get(item.task_id),
                 task_actions,
                 steps_by_task.get(item.task_id, ()),
                 prefs.get(item.task_id, ProgressPreference()),
+                timed=timed_by_task.get(item.task_id, ()),
+                simple=(
+                    tasks_by_id.get(item.task_id) is not None
+                    and (
+                        (task_modes or {}).get(item.task_id) == "simple"
+                        or (
+                            overview.advanced is not None
+                            and is_simple_task(
+                                tasks_by_id[item.task_id],
+                                overview.advanced.steps,
+                                task_modes or {},
+                            )
+                        )
+                    )
+                ),
             )
         if len(items) > 3:
             label = "Show fewer deadlines" if expanded else f"Show {len(items) - 3} more deadlines"

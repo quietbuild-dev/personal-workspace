@@ -45,7 +45,6 @@ from workspace.stale_bookings import (
 from workspace.study_dna import load_study_dna, required_task_ids
 from workspace.theme import priority_badge
 from workspace.views.calendar_import import render_calendar_import
-from workspace.views.energy_today import render_energy_today
 from workspace.views.goal_preview import choose_goal_preview
 from workspace.views.life_time import render_time_protection
 from workspace.views.plan_doctor import render_plan_doctor
@@ -787,7 +786,6 @@ def main() -> None:
             unsafe_allow_html=True,
         )
     if selected_week_start == monday:
-        render_energy_today(snapshot, now, DEFAULT_DB_PATH)
         render_time_protection(snapshot, now, DEFAULT_DB_PATH)
     if selected_week_start != monday:
         st.caption("Automatic schedule suggestions currently cover today through Sunday.")

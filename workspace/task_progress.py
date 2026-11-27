@@ -106,6 +106,16 @@ def progress_html(task, checklist=(), timed_steps=(), preference=None):
     if items and task.status != "completed" and meaning == "Checklist completed":
         checked = sum(bool(item.checked) for item in items)
         label = f"{checked} of {len(items)} subtasks complete · {pct}%"
+    elif preference is not None and preference.mode == "time" and task.status != "completed":
+        timed = [step for step in timed_steps if step.kind == "timed"]
+        total = (
+            sum(int(step.estimate_minutes) for step in timed) if timed else task.estimate_minutes
+        )
+        remaining = (
+            sum(int(step.remaining_minutes) for step in timed) if timed else task.remaining_minutes
+        )
+        minutes_done = max(0, total - remaining)
+        label = f"{minutes_done} of {total} min completed · {pct}%"
     else:
         label = f"{pct}% {meaning.lower()}"
     return (
@@ -127,4 +137,6 @@ def tracking_choice(task, task_mode: str | None, preference=None, checklist=()) 
     pref = preference or ProgressPreference()
     if pref.mode == "checklist" or (pref.mode == "auto" and checklist):
         return "Subtasks"
+    if pref.mode == "time":
+        return "Time tracked"
     return "Progress bar"
