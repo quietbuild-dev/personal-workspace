@@ -10,17 +10,17 @@ Instead of manually fitting assignments around lectures, appointments, and other
 
 ## What you can do
 
-- **Home â€” The bigger picture.** See what matters today: upcoming deadlines, priorities, remaining workload, and recent progress. No digging through endless task lists.
+- **Home — The bigger picture.** See what matters today: upcoming deadlines, priorities, remaining workload, and recent progress. No digging through endless task lists.
 
-- **Tasks â€” Not everything is just done or not done.** Organize tasks by deadline, priority, and estimated effort. Tick off quick to-dos, track longer assignments with a progress bar, or break them into subtasks. Finishing the last subtask can automatically complete the parent task, provided no required work remains.
+- **Tasks — Not everything is just done or not done.** Organize tasks by deadline, priority, and estimated effort. Tick off quick to-dos, track longer assignments with a progress bar, or break them into subtasks. Finishing the last subtask can automatically complete the parent task, provided no required work remains.
 
-- **Calendar â€” See where your time actually goes.** Keep lectures, appointments, and study sessions together. Switch between day and week views, create recurring events, and import or export `.ics` files.
+- **Calendar — See where your time actually goes.** Keep lectures, appointments, and study sessions together. Switch between day and week views, create recurring events, and import or export `.ics` files.
 
-- **Settings & Personalization â€” Plan around your study style.** Set when you study best, how long you like to focus, whether you prefer an evenly spread workload, and how flexible your study times are. You can also choose your preferred breaks and daily study hours. These preferences guide scheduling suggestions, while deadlines and fixed commitments come first.
+- **Settings & Personalization — Plan around your study style.** Set when you study best, how long you like to focus, whether you prefer an evenly spread workload, and how flexible your study times are. You can also choose your preferred breaks and daily study hours. These preferences guide scheduling suggestions, while deadlines and fixed commitments come first.
 
-- **Smart Planner â€” Five goals, different ways to plan your week.** Our optimizer finds study slots around existing commitments, taking deadlines, priorities, available hours, and task dependencies into account. Choose what matters most, compare proposed schedules, and decide which one to save. If everything doesn't fit, the planner shows what's left out instead of pretending there are more hours in the day.
+- **Smart Planner — Five goals, different ways to plan your week.** Our optimizer finds study slots around existing commitments, taking deadlines, priorities, available hours, and task dependencies into account. Choose what matters most, compare proposed schedules, and decide which one to save. If everything doesn't fit, the planner shows what's left out instead of pretending there are more hours in the day.
 
-- **Weekly review â€” Planned vs. actual.** Look back at your week and compare completed work with what was originally scheduled.
+- **Weekly review — Planned vs. actual.** Look back at your week and compare completed work with what was originally scheduled.
 
 ## The interesting part: making a plan that doesn't cheat
 
@@ -129,9 +129,9 @@ We kept the interface, scheduling logic, and database code separate, so they're 
 
 ### A closer look at the algorithms
 
-- [**Goal-Based Optimizer**](https://github.com/quietbuild-dev/personal-workspace/blob/main/docs/GOAL_BASED_OPTIMIZER.md) â€” How we model scheduling constraints and implement the five optimization goals.
+- [**Goal-Based Optimizer**](https://github.com/quietbuild-dev/personal-workspace/blob/main/docs/GOAL_BASED_OPTIMIZER.md) — How we model scheduling constraints and implement the five optimization goals.
 
-- [**Optimizer Evaluation**](https://github.com/quietbuild-dev/personal-workspace/blob/main/docs/OPTIMIZER_EVALUATION.md) â€” How we compare the algorithms and evaluate their results.
+- [**Optimizer Evaluation**](https://github.com/quietbuild-dev/personal-workspace/blob/main/docs/OPTIMIZER_EVALUATION.md) — How we compare the algorithms and evaluate their results.
 
 ## Scope & limitations
 
